@@ -43,7 +43,12 @@ def _make_fs(root):
 
 
 def test_writer_writes_to_localfilesystem_root(tmp_path):
-    """Direct test that ParquetPartitionWriter passes filesystem to PyArrow."""
+    """Direct test that ParquetPartitionWriter passes filesystem to PyArrow.
+
+    Note that with a custom filesystem the writer skips the .tmp +
+    rename path (non-local FSes can't rename atomically), so the final
+    file lands at the target path directly.
+    """
     fs_root = tmp_path / "fs"
     fs_root.mkdir()
     fs = _make_fs(str(fs_root))
@@ -54,7 +59,6 @@ def test_writer_writes_to_localfilesystem_root(tmp_path):
     writer.write_chunk(pa.table({"a": [1, 2, 3]}))
     writer.close()
 
-    # File should exist under fs_root.
     files = [p for p in fs_root.rglob("*.parquet")]
     assert files, f"no parquet written under {fs_root}"
     table = pq.read_table(str(files[0]))
@@ -102,10 +106,16 @@ def test_streaming_exporter_with_filesystem_writes(tmp_path):
     result = exporter.export(page_size=10)
 
     assert result.rows_written == 150
-    # The writer's filesystem should have written under fs_root.
+    # With a custom filesystem, files land at the target path directly
+    # (no .tmp + rename). Both .parquet and .parquet.tmp may exist; we
+    # only care that the rename (or the direct write) produced readable
+    # parquet files.
     written = list(fs_root.rglob("*.parquet"))
     assert written, f"no parquet written under {fs_root}"
-    table = pq.read_table(str(written[0]))
+    # The data file (not .tmp) should be readable.
+    final = [p for p in written if not str(p).endswith(".tmp")]
+    assert final, f"no final parquet file under {fs_root}"
+    table = pq.read_table(str(final[0]))
     assert table.num_rows == 150
 
 
@@ -130,8 +140,10 @@ def test_streaming_exporter_with_filesystem_and_partitions(tmp_path):
     )
     result = exporter.export()
     assert result.rows_written == 10
-    written = list(fs_root.rglob("*.parquet"))
-    assert len(written) == 2
+    # With a custom filesystem, both .parquet and .parquet.tmp may exist.
+    # We expect one final .parquet per partition.
+    final = [p for p in fs_root.rglob("*.parquet") if not str(p).endswith(".tmp")]
+    assert len(final) == 2
 
 
 # ---------------------------------------------------------------------------
