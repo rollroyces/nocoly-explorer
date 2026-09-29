@@ -13,7 +13,12 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 import aiohttp
 
-from .exceptions import JobCancelled, NocolyError
+from .exceptions import AsyncClientError, JobCancelled, NocolyError, PaginationLimitExceeded
+from .schema import (
+    NocolyWorksheetSchema,
+    infer_schema_from_rows,
+    parse_columns_response,
+)
 
 _LOGGER = logging.getLogger("nocoly_explorer.async")
 
@@ -224,6 +229,109 @@ class AsyncWorksheetClient:
         raise AsyncClientError(
             f"Page {page} failed after {self.retry_policy.max_retries + 1} attempts; "
             f"last error: {last_exc}"
+        )
+
+    async def get_worksheet_schema_async(
+        self,
+        worksheet_id=None,
+        *,
+        sample_size=1,
+        metadata_endpoint=None,
+        try_api=None,
+    ):
+        """Async version of WorksheetClient.get_worksheet_schema.
+
+        Same try-API-then-fallback contract. See the sync method's
+        docstring for the full caveat about the default endpoint being
+        unverified; pass ``try_api=False`` or set
+        ``NOCOLY_SCHEMA_API_DISABLED=1`` to skip the network call.
+
+        Each API attempt emits a DEBUG line on the ``nocoly_explorer.async``
+        logger with the URL and HTTP status, so you can see exactly what
+        was tried when you tail logs.
+        """
+        if self._session is None:
+            raise AsyncClientError(
+                "Client not entered; use 'async with AsyncWorksheetClient(...)'."
+            )
+        target_id = worksheet_id or self.worksheet_id
+        # Import locally to avoid a circular import at module load.
+        from .client import _resolve_try_api
+        api_enabled = _resolve_try_api(try_api)
+
+        if api_enabled:
+            endpoint = metadata_endpoint or (
+                "/api/v3/app/worksheets/" + target_id + "/columns"
+            )
+            url = self.base_url + endpoint
+            _LOGGER.debug(
+                "schema.try_api_attempt",
+                extra={"worksheet_id": target_id, "url": url},
+            )
+            try:
+                async with self._session.post(url, json={}) as resp:
+                    _LOGGER.debug(
+                        "schema.try_api_response",
+                        extra={
+                            "worksheet_id": target_id,
+                            "url": url,
+                            "status": resp.status,
+                        },
+                    )
+                    if resp.status == 200:
+                        try:
+                            payload = await resp.json()
+                        except Exception:
+                            payload = None
+                        parsed = (
+                            parse_columns_response(payload)
+                            if payload is not None
+                            else None
+                        )
+                        if parsed:
+                            return NocolyWorksheetSchema(
+                                worksheet_id=target_id,
+                                columns=parsed,
+                                source="api",
+                            )
+                        _LOGGER.debug(
+                            "schema.try_api_unrecognized_shape",
+                            extra={"worksheet_id": target_id, "url": url},
+                        )
+            except aiohttp.ClientError as exc:
+                _LOGGER.debug(
+                    "schema.try_api_error",
+                    extra={
+                        "worksheet_id": target_id,
+                        "url": url,
+                        "error": str(exc),
+                    },
+                )
+
+        # Fallback: fetch a small page and infer.
+        sample_rows = []
+        async for page in self.fetch_pages_async(
+            page_size=max(sample_size, 1),
+            max_pages=1,
+        ):
+            sample_rows.extend(page)
+            if len(sample_rows) >= sample_size:
+                break
+        if not sample_rows:
+            raise NocolyError(
+                "No rows returned from worksheet "
+                + repr(target_id)
+                + "; cannot infer schema."
+            )
+        inferred = infer_schema_from_rows(
+            sample_rows[: max(sample_size, 1)],
+            sample_size=sample_size,
+            worksheet_id=target_id,
+        )
+        return NocolyWorksheetSchema(
+            worksheet_id=inferred.worksheet_id,
+            columns=inferred.columns,
+            source="inferred",
         )
 
     async def fetch_all_async(
