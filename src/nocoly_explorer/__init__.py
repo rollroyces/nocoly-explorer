@@ -12,6 +12,8 @@ __all__ = [
     "create_app", "JobSubmission", "JobStatus", "JobResult",
     "HealthResponse", "OutputSpec", "JobState", "run_job",
     "NocolyColumnInfo", "NocolyWorksheetSchema", "infer_schema_from_rows",
+    "FileSyncStateStore", "RedisSyncStateStore", "SyncWatermark",
+    "max_watermark",
 ]
 
 # Lazy re-exports: keep pyarrow, aiohttp, fastapi optional.
@@ -29,6 +31,13 @@ _ASYNC_EXPORTS = {
 _SERVICE_EXPORTS = {
     "create_app", "JobSubmission", "JobStatus", "JobResult",
     "HealthResponse", "OutputSpec", "JobState", "run_job",
+}
+
+_SYNC_STATE_EXPORTS = {
+    "FileSyncStateStore",
+    "RedisSyncStateStore",
+    "SyncWatermark",
+    "max_watermark",
 }
 
 _SCHEMA_EXPORTS = {
@@ -98,5 +107,18 @@ def __getattr__(name):
             "NocolyColumnInfo": NocolyColumnInfo,
             "NocolyWorksheetSchema": NocolyWorksheetSchema,
             "infer_schema_from_rows": infer_schema_from_rows,
+        }[name]
+    if name in _SYNC_STATE_EXPORTS:
+        from .sync_state import (
+            FileSyncStateStore,
+            RedisSyncStateStore,
+            SyncWatermark,
+            max_watermark,
+        )
+        return {
+            "FileSyncStateStore": FileSyncStateStore,
+            "RedisSyncStateStore": RedisSyncStateStore,
+            "SyncWatermark": SyncWatermark,
+            "max_watermark": max_watermark,
         }[name]
     raise AttributeError(f"module 'nocoly_explorer' has no attribute {name!r}")

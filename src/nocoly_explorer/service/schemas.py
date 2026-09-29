@@ -54,6 +54,15 @@ class JobSubmission(BaseModel):
     max_pages: int = Field(default=1000, ge=1)
     concurrency: int = Field(default=8, ge=1, le=32)
 
+    # v0.4.0: incremental sync. ``state_store_kind`` selects the backend
+    # ("file" or "redis"); the worker constructs the store from the
+    # configured Redis URL when "redis", otherwise uses FileSyncStateStore.
+    incremental: bool = False
+    state_store_kind: str = Field(default="file", pattern="^(file|redis)$")
+    force_full: bool = False
+    updated_at_column: str = "_updatedAt"
+    workspace: str = "default"
+
 
 class JobStatus(BaseModel):
     job_id: str
