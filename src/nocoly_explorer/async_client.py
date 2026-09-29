@@ -13,7 +13,12 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 
 import aiohttp
 
-from .exceptions import JobCancelled, NocolyError
+from .exceptions import AsyncClientError, JobCancelled, NocolyError, PaginationLimitExceeded
+from .schema import (
+    NocolyWorksheetSchema,
+    infer_schema_from_rows,
+    parse_columns_response,
+)
 
 _LOGGER = logging.getLogger("nocoly_explorer.async")
 
@@ -224,6 +229,81 @@ class AsyncWorksheetClient:
         raise AsyncClientError(
             f"Page {page} failed after {self.retry_policy.max_retries + 1} attempts; "
             f"last error: {last_exc}"
+        )
+
+    async def get_worksheet_schema_async(
+        self,
+        worksheet_id=None,
+        *,
+        sample_size=1,
+        metadata_endpoint=None,
+    ):
+        """Async version of WorksheetClient.get_worksheet_schema.
+
+        Tries the Nocoly metadata endpoint first (POST with bearer auth);
+        on failure or unrecognized shape, falls back to fetching a small
+        page and inferring types from the response.
+
+        Returns a NocolyWorksheetSchema with source="api" on success or
+        source="inferred" on the fallback path.
+        """
+        if self._session is None:
+            raise AsyncClientError(
+                "Client not entered; use 'async with AsyncWorksheetClient(...)'."
+            )
+        target_id = worksheet_id or self.worksheet_id
+        endpoint = metadata_endpoint or (
+            "/api/v3/app/worksheets/" + target_id + "/columns"
+        )
+        url = self.base_url + endpoint
+        try:
+            async with self._session.post(url, json={}) as resp:
+                if resp.status == 200:
+                    try:
+                        payload = await resp.json()
+                    except Exception:
+                        payload = None
+                    parsed = (
+                        parse_columns_response(payload)
+                        if payload is not None
+                        else None
+                    )
+                    if parsed:
+                        return NocolyWorksheetSchema(
+                            worksheet_id=target_id,
+                            columns=parsed,
+                            source="api",
+                        )
+        except aiohttp.ClientError as exc:
+            _LOGGER.debug(
+                "async.metadata_endpoint_failed",
+                extra={"worksheet_id": target_id, "error": str(exc)},
+            )
+
+        # Fallback: fetch a small page and infer.
+        sample_rows = []
+        async for page in self.fetch_pages_async(
+            page_size=max(sample_size, 1),
+            max_pages=1,
+        ):
+            sample_rows.extend(page)
+            if len(sample_rows) >= sample_size:
+                break
+        if not sample_rows:
+            raise NocolyError(
+                "No rows returned from worksheet "
+                + repr(target_id)
+                + "; cannot infer schema."
+            )
+        inferred = infer_schema_from_rows(
+            sample_rows[: max(sample_size, 1)],
+            sample_size=sample_size,
+            worksheet_id=target_id,
+        )
+        return NocolyWorksheetSchema(
+            worksheet_id=inferred.worksheet_id,
+            columns=inferred.columns,
+            source="inferred",
         )
 
     async def fetch_all_async(

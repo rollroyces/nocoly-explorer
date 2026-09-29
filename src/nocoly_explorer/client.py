@@ -10,6 +10,11 @@ from typing import Any, Dict, List, Optional
 
 from .auth import CredentialPair
 from .exceptions import NocolyError
+from .schema import (
+    NocolyWorksheetSchema,
+    infer_schema_from_rows,
+    parse_columns_response,
+)
 
 try:  # Lazy import to avoid hard dependency if user stubs out HTTP layer
     import requests
@@ -139,6 +144,74 @@ class WorksheetClient:
             if not has_more:
                 break
         return rows
+
+    def get_worksheet_schema(
+        self,
+        worksheet_id: Optional[str] = None,
+        *,
+        sample_size: int = 1,
+        metadata_endpoint: Optional[str] = None,
+        timeout_seconds: Optional[float] = None,
+    ) -> NocolyWorksheetSchema:
+        """Discover the worksheet's column schema and data types.
+
+        Tries the Nocoly metadata endpoint first (``metadata_endpoint`` or
+        the default ``/api/v3/app/worksheets/{id}/columns``); if the request
+        fails or the response shape is unrecognized, falls back to fetching
+        ``sample_size`` rows and inferring types.
+
+        Returns a :class:`NocolyWorksheetSchema` with ``source`` set to
+        ``"api"`` on success or ``"inferred"`` on the fallback path.
+        """
+        target_id = worksheet_id or self.worksheet_id
+        endpoint = metadata_endpoint or f"/api/v3/app/worksheets/{target_id}/columns"
+        url = f"{self.base_url}{endpoint}"
+        timeout = max(
+            0.0, timeout_seconds if timeout_seconds is not None else self.timeout_seconds
+        )
+        try:
+            response = self._session.post(
+                url,
+                json={},
+                headers=self._build_headers(),
+                timeout=timeout,
+                verify=self.verify_ssl,
+            )
+            if response.ok:
+                try:
+                    payload = response.json()
+                except ValueError:
+                    payload = None
+                parsed = parse_columns_response(payload) if payload is not None else None
+                if parsed:
+                    return NocolyWorksheetSchema(
+                        worksheet_id=target_id, columns=parsed, source="api"
+                    )
+        except requests.RequestException as exc:
+            self._logger.debug(
+                "Worksheet metadata endpoint failed; falling back to inference",
+                extra={"worksheet_id": target_id, "error": str(exc)},
+            )
+
+        # Fallback: fetch a small page and infer types.
+        rows = self.fetch_rows(
+            page_size=max(sample_size, 1),
+            max_pages=1,
+        )
+        sample = rows[: max(sample_size, 1)]
+        if not sample:
+            raise NocolyError(
+                f"No rows returned from worksheet {target_id!r}; "
+                f"cannot infer schema."
+            )
+        inferred = infer_schema_from_rows(
+            sample, sample_size=sample_size, worksheet_id=target_id
+        )
+        return NocolyWorksheetSchema(
+            worksheet_id=inferred.worksheet_id,
+            columns=inferred.columns,
+            source="inferred",
+        )
 
     def _execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         url = f"{self.base_url}{self.ROWS_ENDPOINT.format(worksheet_id=self.worksheet_id)}"

@@ -11,6 +11,7 @@ __all__ = [
     "AsyncWorksheetClient", "AsyncClientError", "PaginationLimitExceeded",
     "create_app", "JobSubmission", "JobStatus", "JobResult",
     "HealthResponse", "OutputSpec", "JobState", "run_job",
+    "NocolyColumnInfo", "NocolyWorksheetSchema", "infer_schema_from_rows",
 ]
 
 # Lazy re-exports: keep pyarrow, aiohttp, fastapi optional.
@@ -28,6 +29,12 @@ _ASYNC_EXPORTS = {
 _SERVICE_EXPORTS = {
     "create_app", "JobSubmission", "JobStatus", "JobResult",
     "HealthResponse", "OutputSpec", "JobState", "run_job",
+}
+
+_SCHEMA_EXPORTS = {
+    "NocolyColumnInfo",
+    "NocolyWorksheetSchema",
+    "infer_schema_from_rows",
 }
 
 
@@ -80,5 +87,16 @@ def __getattr__(name):
             "HealthResponse": HealthResponse,
             "OutputSpec": OutputSpec,
             "run_job": run_job,
+        }[name]
+    if name in _SCHEMA_EXPORTS:
+        from .schema import (
+            NocolyColumnInfo,
+            NocolyWorksheetSchema,
+            infer_schema_from_rows,
+        )
+        return {
+            "NocolyColumnInfo": NocolyColumnInfo,
+            "NocolyWorksheetSchema": NocolyWorksheetSchema,
+            "infer_schema_from_rows": infer_schema_from_rows,
         }[name]
     raise AttributeError(f"module 'nocoly_explorer' has no attribute {name!r}")
