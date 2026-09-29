@@ -574,8 +574,8 @@ src/nocoly_explorer/
 
 ## Honest gaps
 
-This section lists what we have **not yet** verified end-to-end. Add them to your
-own integration checklist:
+This section lists what we have **not yet** verified end-to-end. Add the
+remaining items to your own integration checklist:
 
 - **Real Nocoly endpoint with real credentials.** Everything end-to-end has been
   validated against a local mock that matches the documented pagination shape.
@@ -585,16 +585,37 @@ own integration checklist:
   (`/api/v3/app/worksheets/{id}/columns`) is an educated guess; the Nocoly
   metadata path has not been verified against a real server. The sample-based
   inference fallback works regardless, but `source="api"` should be confirmed
-  against your deployment before relying on it.
+  against your deployment before relying on it. Set `try_api=False` or
+  `NOCOLY_SCHEMA_API_DISABLED=1` to skip the API attempt entirely.
 - **Crash-restart safety on non-local filesystems.** Local exports use a
   `.tmp` + rename pattern; S3 and other non-local destinations fall back to
   direct writes because atomic rename isn't portable. A future commit could
   implement upload-then-promote via `pyarrow.fs` copy semantics if needed.
+- **`auth_token` is optional in v0.2.x for backward compatibility.** The
+  FastAPI service silently accepts a job with no `auth_token` and only fails
+  on the first request to Nocoly. This will become required in the next minor
+  version. Set `auth_token` explicitly on every `POST /jobs` until then.
+- **PyArrow version compatibility.** Tests run against pyarrow 25.0.1. PyArrow
+  has tightened `datetime` handling in recent majors; if you pin a different
+  version, exercise `infer_schema_from_rows` and the `ParquetSchemaManager`
+  drift path against a sample of your real data.
 - **Incremental sync.** Spec §6 (the Phase 4 `SyncStateStore` + `updated_at`
   filtering) is not implemented. v0.2.1 will address it.
 - **Multi-row-group per partition at scale.** Tested with single-digit row groups
   per partition. Databricks recommendations (128 MB row groups) haven't been
   load-tested at hundreds of MB per partition.
+
+### Things closed since v0.2.0 (kept here for context)
+
+- Streaming write memory — `StreamingExporter.stream_async` is now the default
+  write path in `run_job`; total memory is bounded by `row_group_bytes` and
+  in-flight pages, not by the full row count.
+- `parquet_s3` sink — wired via `pyarrow.fs.S3FileSystem`. The worker
+  resolves `s3://` URIs automatically when `OutputSpec.sink = parquet_s3`.
+- Local crash-restart safety — `ParquetPartitionWriter` writes to a sibling
+  `.tmp` and renames on close. A killed worker leaves only `.tmp` behind.
+- Backoff deduplication — the sync and async clients share
+  `nocoly_explorer.backoff.compute_backoff` and `parse_retry_after`.
 
 ---
 
