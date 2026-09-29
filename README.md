@@ -16,17 +16,30 @@
 
 </div>
 
-A modular Python client for downloading [Nocoly](https://www.nocoly.com) worksheet
-data — from one-shot scripts to enterprise data pipelines. Four layers stacked on
-the same core client:
+**Pull data from [Nocoly](https://www.nocoly.com) — the no-code business apps
+platform — into a format your team can actually work with.** Whether you
+need a one-off export to a spreadsheet, a continuously updated data
+warehouse feed, or anything in between, this library gets Nocoly
+worksheets into pandas, Spark, Parquet, JSON, or CSV without writing
+the boilerplate.
 
-- 🟢 **`WorksheetExporter`** — fetch into pandas / PySpark / CSV / JSON / files (v0.1.1)
-- 🔵 **`StreamingExporter` + `AsyncWorksheetClient`** — paginate concurrently, write
-  partitioned Parquet, hold memory bounded by row-group size (v0.2.0)
-- 🟣 **`create_app` + `run_job`** — FastAPI service + Arq worker for orchestration
-  from n8n / Airflow / schedulers (v0.2.0)
-- 🟠 **`get_worksheet_schema`** — discover column names + data types directly from
-  Nocoly, with sample-based inference fallback (v0.2.0)
+Choose the level that matches your use case:
+
+- 🟢 **One-shot fetch** — pull a worksheet into a pandas DataFrame,
+  Spark DataFrame, CSV, JSON, or files. Use this for ad-hoc analysis
+  or small exports.
+- 🔵 **Streaming export** — pull a large worksheet into partitioned
+  Parquet without loading everything into memory. Use this when
+  your worksheet is bigger than your RAM, or you want files that look
+  like a data lake.
+- 🟣 **Scheduled jobs** — submit an export to a small web service;
+  background workers run it for you. Use this from n8n, Airflow, cron,
+  or any other scheduler.
+- 🟠 **Schema discovery** — ask "what columns does this worksheet have
+  and what types are they?" before deciding how to export. Use this
+  when you're connecting to a Nocoly app for the first time.
+
+Don't know which you need? See [When to use which] below.
 
 ---
 
@@ -80,13 +93,34 @@ specific section below.
 
 ---
 
+## When to use which
+
+A short decision guide. Pick the smallest option that does the job —
+they compose, you don't have to commit to one.
+
+| If you need to… | Use | Why |
+|---|---|---|
+| Look at a worksheet once in a notebook | One-shot fetch | Smallest setup; one import, one call |
+| Save a worksheet to disk as Parquet for analysis | Streaming export | Handles big worksheets without OOM |
+| Run the same export every hour from cron / n8n / Airflow | Scheduled jobs | Submit → poll; the worker does the heavy lifting |
+| Build a pipeline that only pulls *new* rows each run | Streaming + incremental sync | Saves bandwidth and avoids re-processing |
+| Explore what columns a worksheet has before exporting | Schema discovery | Avoids guessing; tells you types |
+| Push exports directly into an S3 bucket | Streaming + parquet_s3 sink | No local disk round-trip |
+
+Not on the list at all? Use one-shot fetch — it's the cheapest path and
+can be upgraded later without rewriting your code.
+
+---
+
 ## Contents
 
 - [Quick start](#quick-start)
+- [When to use which](#when-to-use-which)
 - [What you get](#what-you-get)
 - [How a job flows](#how-a-job-flows)
 - [Live demo](#live-demo)
 - [Installation](#installation)
+- [Concepts you may need](#concepts-you-may-need)
 - [Layer 1 — `WorksheetExporter`](#layer-1--worksheetexporter-v011)
 - [Discovering the worksheet schema](#discovering-the-worksheet-schema-v020)
 - [Incremental sync](#incremental-sync-v040)
@@ -97,6 +131,7 @@ specific section below.
 - [Examples](#examples)
 - [Project layout](#project-layout)
 - [Honest gaps](#honest-gaps)
+- [Glossary](#glossary)
 - [License](#license)
 
 ---
@@ -194,6 +229,39 @@ pip install "nocoly-explorer[service,streaming,async]"  # full pipeline + API
 
 ---
 
+## Concepts you may need
+
+If you're new to Nocoly exports, these terms come up a lot. Skim now,
+refer back when something doesn't behave the way you expect.
+
+- **Worksheet** — a table in a Nocoly app, like a spreadsheet. Each row
+  is a record; each column is a field. A worksheet has an id like
+  `ws_123`.
+- **Page** — Nocoly returns worksheets in pages (default 200 rows each)
+  rather than all at once. This is called *pagination*. Use `page_size`
+  to tune how big each page is.
+- **Filter** — a way to ask Nocoly for only the rows you care about,
+  built with `NocolyFilter.quick(...)` and `and_group(...)` /
+  `or_group(...)`. Mirrors the v3 Nocoly query language.
+- **Row group** — Parquet splits a file into chunks called row groups
+  (default 128 MiB in this library). Readers can skip row groups they
+  don't need, so picking a sensible row-group size is a real
+  performance knob.
+- **Partition** — when exporting a large worksheet, you can split the
+  output across directories by a column's value (e.g. `region=HK/`,
+  `region=SZ/`). Downstream tools (Spark, Athena, DuckDB) read these
+  as a single logical table.
+- **Watermark** — a timestamp marking "the last row we've seen". Used
+  for *incremental sync* — only fetch rows whose update time is newer
+  than the watermark on the next run.
+- **Sink** — where the exported data lands. Local directory or S3
+  bucket; future sinks could be HTTP, Snowflake, etc.
+
+For the full glossary of every name in this codebase, see
+[Glossary](#glossary) at the bottom.
+
+---
+
 ## Layer 1 — `WorksheetExporter` (v0.1.1)
 
 The original use case: fetch a worksheet into a DataFrame (or Spark / CSV / JSON /
@@ -233,7 +301,7 @@ df = WorksheetExporter().export(
 
 ### Architecture (Layer 1)
 
-```python
+```text
 WorksheetExporter
  ├── EnvironmentDetector       (Databricks vs. local)
  ├── CredentialProvider        (Databricks secrets vs. env vs. config)
@@ -562,7 +630,7 @@ curl -X POST http://localhost:8080/jobs \
     }
   }'
 # {"job_id": "a1b2c3..."}
-```python
+```
 
 ### Poll status
 
@@ -768,3 +836,90 @@ remaining items to your own integration checklist:
 ## License
 
 Dual-licensed under MIT and Apache 2.0 at your option.
+
+---
+
+## Glossary
+
+Alphabetical lookup for names that came up in the code or the docs. If
+you see a symbol you don't recognize, check here first.
+
+- **`app_key` / `app_sign`** — the credentials Nocoly expects in
+  `HAP-AppKey` and `HAP-Sign` HTTP headers. Get them from your Nocoly
+  app's API settings.
+- **`api_key`** — the bearer token the *FastAPI service* expects on
+  every request, configured via `NOCOLY_SERVICE_API_KEY`. Different
+  thing from `app_key`.
+- **`auth_token`** — the per-job Nocoly credential, formatted
+  `app_key:app_sign`, passed in `JobSubmission.auth_token`. Required
+  since v0.3.0.
+- **`AsyncWorksheetClient`** — Layer 2 client. Fetches pages
+  concurrently with `aiohttp` instead of sequentially with
+  `requests`.
+- **`backoff`** (`nocoly_explorer.backoff`) — the shared retry /
+  rate-limit math used by both sync and async clients. Single source
+  of truth since v0.4.0.
+- **`cancel_check`** — async callable passed to `fetch_all_async` /
+  `fetch_pages_async` / `stream_async` that returns `True` to request
+  cooperative cancellation between pages. Used by the FastAPI
+  `/jobs/{id}/cancel` endpoint.
+- **`fetch_pages_async`** — async generator yielding one page at a
+  time; the streaming exporter consumes this.
+- **`FileSyncStateStore`** — default `SyncStateStore` for incremental
+  sync. Stores watermarks as JSON in `.nocoly-state/`.
+- **`get_worksheet_schema`** — discover column names + types before
+  exporting.
+- **`HAP-AppKey` / `HAP-Sign`** — Nocoly's HTTP auth headers. Don't
+  confuse with FastAPI's `Authorization: Bearer` header.
+- **`incremental`** — flag on `WorksheetExporter.export(...)` and
+  `JobSubmission` that enables incremental sync (only fetch rows
+  newer than the stored watermark).
+- **`max_pages`** — hard ceiling on how many pages to fetch per
+  export. A safety net so a misconfigured filter doesn't drain the
+  whole Nocoly server.
+- **`max_updated_at`** — field on `ExportResult` exposed by the
+  streaming exporter after v0.4.0; the maximum `_updatedAt` seen
+  across all rows ingested. Used to persist the new watermark.
+- **`NocolyColumnInfo`** — `name`, `type`, `nullable`,
+  `description` for one column in a `NocolyWorksheetSchema`.
+- **`NocolyWorksheetSchema`** — `worksheet_id`, `columns`,
+  `source` (`"api"` or `"inferred"`); convertible to a PyArrow schema
+  via `.to_pyarrow()`.
+- **`NocolyFilter`** — DSL for building filters with `quick`,
+  `and_group`, `or_group`. Mirrors Nocoly's query language; depth
+  limited to 3.
+- **`OutputSpec`** — Pydantic model for the `output` field of
+  `JobSubmission`; describes the sink type and path.
+- **`ParquetPartitionWriter`** — wraps `pyarrow.parquet.ParquetWriter`
+  with crash-safe `.tmp` + rename semantics on local filesystems.
+- **`PartitionSpec`** — `column=` + `granularity=` (`"day"`, `"month"`,
+  `"year"`); controls how rows are bucketed into partition directories.
+- **`pyarrow.fs.FileSystem`** — PyArrow's filesystem abstraction.
+  Pass an instance via `StreamingExportConfig.filesystem` to write to
+  S3 (`pyarrow.fs.S3FileSystem.from_uri("s3://...")`) instead of the
+  local disk.
+- **`RedisSyncStateStore`** — alternative `SyncStateStore` for
+  service deployments. One Redis key per worksheet; uses
+  `SET NX EX` for cross-process locking.
+- **`run_job`** — the Arq worker entry point. Consumes a job, runs
+  the streaming write, persists status to Redis.
+- **`StreamingExportConfig`** — dataclass with `output_dir`,
+  `worksheet_id`, `options`, `partition`, `filesystem`. Drives a
+  streaming export.
+- **`StreamingExporter`** — Layer 2 component. Has both a sync
+  `export(...)` method and an async `streaming(...)` method (added in
+  v0.2.0).
+- **`SyncStateStore`** — Protocol for incremental-sync state.
+  Implementations: `FileSyncStateStore`, `RedisSyncStateStore`.
+- **`SyncWatermark`** — `worksheet_id`, `watermark` (max
+  `_updatedAt`), `last_run_at`, `rows_synced`.
+- **`token_bucket`** — async rate limiter; controls requests-per-second
+  against Nocoly's API. Configurable per `AsyncWorksheetClient`.
+- **`WorksheetClient`** — Layer 1 sync HTTP client. Retries with
+  exponential backoff; honors `Retry-After` on 429/503.
+- **`WorksheetExporter`** — Layer 1 orchestrator. Validates config,
+  builds the right client, formats the result. Use the `incremental=`
+  kwarg for incremental sync.
+- **`WorksheetClientLike`** — Protocol that the streaming exporter
+  accepts in its constructor; anything with a `fetch_rows(...)`
+  method qualifies.
