@@ -793,8 +793,6 @@ remaining items to your own integration checklist:
   `.tmp` + rename pattern; S3 and other non-local destinations fall back to
   direct writes because atomic rename isn't portable. A future commit could
   implement upload-then-promote via `pyarrow.fs` copy semantics if needed.
-- **Incremental sync** — landed in v0.4.0 via `FileSyncStateStore` and
-  `RedisSyncStateStore`. See the "Incremental sync" section below.
 - **Multi-row-group per partition at scale.** Tested with single-digit row groups
   per partition. Databricks recommendations (128 MB row groups) haven't been
   load-tested at hundreds of MB per partition.
