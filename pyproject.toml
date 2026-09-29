@@ -1,6 +1,6 @@
 [project]
 name = "nocoly-explorer"
-version = "0.2.0"
+version = "0.3.0"
 description = "Modular worksheet downloader/exporter for Nocoly datasets"
 readme = "README.md"
 authors = [{name = "Chinachem Data Platform"}]
@@ -12,7 +12,7 @@ dependencies = [
 [project.optional-dependencies]
 dataframe = ["pandas>=2.0.0"]
 spark = ["pyspark>=3.4.0"]
-streaming = ["pyarrow>=14.0.0"]
+streaming = ["pyarrow>=14.0.0,<26"]  # CI runs against 25.0.1; pin and re-test on bump
 async = ["aiohttp>=3.9.0"]
 service = [
     # FastAPI 1.0 may ship breaking changes; pin until tested.

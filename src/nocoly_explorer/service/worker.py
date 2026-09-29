@@ -36,9 +36,12 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
     partition_col = sink_cfg.get("partition_by")
     partition_gran = sink_cfg.get("partition_granularity")
 
+    # JobSubmission (Pydantic) now requires host/worksheet_id/auth_token;
+    # they are guaranteed present. Default fallbacks are for the optional
+    # pagination knobs.
     host = params["host"]
     worksheet_id = params["worksheet_id"]
-    auth_token = params.get("auth_token", "")
+    auth_token = params["auth_token"]
     page_size = params.get("page_size", 200)
     max_pages = params.get("max_pages", 1000)
     concurrency = params.get("concurrency", 8)

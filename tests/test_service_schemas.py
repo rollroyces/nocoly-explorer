@@ -23,7 +23,7 @@ def test_job_not_ready_inherits_from_service_error():
 
 def test_job_submission_minimum_valid():
     from nocoly_explorer.service.schemas import JobSubmission
-    j = JobSubmission(host="https://example.com", worksheet_id="ws-1")
+    j = JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="k:s")
     assert j.host == "https://example.com"
     assert j.worksheet_id == "ws-1"
     assert j.page_size == 200
@@ -36,23 +36,23 @@ def test_job_submission_minimum_valid():
 def test_job_submission_rejects_invalid_page_size():
     from nocoly_explorer.service.schemas import JobSubmission
     with pytest.raises(ValueError):
-        JobSubmission(host="https://example.com", worksheet_id="ws-1", page_size=0)
+        JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="k:s", page_size=0)
     with pytest.raises(ValueError):
-        JobSubmission(host="https://example.com", worksheet_id="ws-1", page_size=1001)
+        JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="k:s", page_size=1001)
 
 
 def test_job_submission_rejects_invalid_concurrency():
     from nocoly_explorer.service.schemas import JobSubmission
     with pytest.raises(ValueError):
-        JobSubmission(host="https://example.com", worksheet_id="ws-1", concurrency=0)
+        JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="k:s", concurrency=0)
     with pytest.raises(ValueError):
-        JobSubmission(host="https://example.com", worksheet_id="ws-1", concurrency=100)
+        JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="k:s", concurrency=100)
 
 
 def test_job_submission_validates_output_sink():
     from nocoly_explorer.service.schemas import JobSubmission, OutputSpec
     o = OutputSpec(sink="parquet_local", path="/tmp/out", partition_by="region")
-    j = JobSubmission(host="https://example.com", worksheet_id="ws-1", output=o)
+    j = JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="k:s", output=o)
     assert j.output.sink == "parquet_local"
 
 
@@ -80,3 +80,23 @@ def test_health_response_construction():
     from nocoly_explorer.service.schemas import HealthResponse
     h = HealthResponse(status="ok")
     assert h.status == "ok"
+
+
+
+class TestAuthTokenRequired:
+    """v0.3.0: auth_token is a required field on every job submission."""
+
+    def test_missing_auth_token_rejected(self):
+        from nocoly_explorer.service.schemas import JobSubmission
+        with pytest.raises(ValueError):
+            JobSubmission(host="https://example.com", worksheet_id="ws-1")
+
+    def test_empty_auth_token_rejected(self):
+        from nocoly_explorer.service.schemas import JobSubmission
+        with pytest.raises(ValueError):
+            JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="")
+
+    def test_non_empty_auth_token_accepted(self):
+        from nocoly_explorer.service.schemas import JobSubmission
+        j = JobSubmission(host="https://example.com", worksheet_id="ws-1", auth_token="k:s")
+        assert j.auth_token == "k:s"

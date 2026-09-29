@@ -41,8 +41,12 @@ class OutputSpec(BaseModel):
 
 
 class JobSubmission(BaseModel):
-    host: str
-    worksheet_id: str
+    # v0.3.0: auth_token is required. Prior to v0.2.x the worker accepted
+    # jobs without one and only failed at the first Nocoly request; that
+    # late-failure mode was a footgun and is removed.
+    host: str = Field(min_length=1)
+    worksheet_id: str = Field(min_length=1)
+    auth_token: str = Field(min_length=1)
     output: Optional[OutputSpec] = None
     filter: Optional[Dict[str, Any]] = None
     columns: Optional[List[str]] = None
