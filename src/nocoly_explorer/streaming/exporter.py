@@ -55,6 +55,10 @@ class StreamingExportConfig:
     worksheet_id: str
     options: ParquetExportOptions = field(default_factory=ParquetExportOptions)
     partition: Optional[PartitionSpec] = None
+    # Optional pyarrow.fs.FileSystem for writing to non-local destinations
+    # (e.g. S3 via pyarrow.fs.S3FileSystem). When set, output_dir is treated
+    # as a path within this filesystem and validate_output_dir is skipped.
+    filesystem: Optional["pa.fs.FileSystem"] = None
 
 
 @dataclass(slots=True)
@@ -74,7 +78,12 @@ class StreamingExporter:
     def __init__(self, client: WorksheetClientLike, config: StreamingExportConfig) -> None:
         self.client = client
         self.config = config
-        self.output_dir = validate_output_dir(config.output_dir)
+        if config.filesystem is None:
+            self.output_dir = validate_output_dir(config.output_dir)
+        else:
+            # Non-local destination: filesystem is responsible for path
+            # resolution. We keep output_dir as a Path for display purposes.
+            self.output_dir = config.output_dir
         self.schema_manager = ParquetSchemaManager(config.options)
         if config.partition is not None:
             self.router = PartitionRouter(
@@ -203,17 +212,36 @@ class StreamingExporter:
     def _get_writer(self, key: Optional[str]) -> ParquetPartitionWriter:
         dict_key = key if key is not None else _UNPARTITIONED_KEY
         if dict_key not in self._writers:
-            if key is None:
-                target = self.output_dir / "data_0.parquet"
-            else:
-                part_dir = resolve_partition_path(self.output_dir, key)
-                target = part_dir / "data_0.parquet"
+            target = self._resolve_target_path(key)
             self._writers[dict_key] = ParquetPartitionWriter(
                 target,
                 self.schema_manager.schema,
                 self.config.options,
+                filesystem=self.config.filesystem,
             )
         return self._writers[dict_key]
+
+    def _resolve_target_path(self, key: Optional[str]):
+        """Resolve the output path for one partition.
+
+        Local: returns a pathlib.Path (``output_dir / data_0.parquet``).
+        Non-local (filesystem is set): returns a string path within that
+        filesystem, e.g. ``"s3://bucket/key/region=HK/data_0.parquet"``.
+        """
+        if self.config.filesystem is None:
+            # Local filesystem path handling
+            if key is None:
+                return self.output_dir / "data_0.parquet"
+            part_dir = resolve_partition_path(self.output_dir, key)
+            return part_dir / "data_0.parquet"
+        # Non-local filesystem: string-based concat. output_dir may be
+        # Path (for display) but the partition path is built as a string.
+        base = str(self.output_dir)
+        if not base.endswith("/"):
+            base = base + "/"
+        if key is None:
+            return base + "data_0.parquet"
+        return base + key + "/data_0.parquet"
 
     def _get_buffer(self, key: Optional[str], schema: pa.Schema) -> RowGroupBuffer:
         dict_key = key if key is not None else _UNPARTITIONED_KEY
