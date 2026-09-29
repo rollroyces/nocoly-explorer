@@ -10,8 +10,8 @@
 
 [![Tests](https://img.shields.io/badge/tests-245%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue)]()
-[![Release](https://img.shields.io/badge/release-v0.2.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.2.0)
-[![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.2.0/nocoly_explorer-0.2.0-py3-none-any.whl)
+[![Release](https://img.shields.io/badge/release-v0.3.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.3.0)
+[![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.3.0/nocoly_explorer-0.3.0-py3-none-any.whl)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache%202.0-lightgrey)]()
 
 </div>
@@ -591,16 +591,8 @@ remaining items to your own integration checklist:
   `.tmp` + rename pattern; S3 and other non-local destinations fall back to
   direct writes because atomic rename isn't portable. A future commit could
   implement upload-then-promote via `pyarrow.fs` copy semantics if needed.
-- **`auth_token` is optional in v0.2.x for backward compatibility.** The
-  FastAPI service silently accepts a job with no `auth_token` and only fails
-  on the first request to Nocoly. This will become required in the next minor
-  version. Set `auth_token` explicitly on every `POST /jobs` until then.
-- **PyArrow version compatibility.** Tests run against pyarrow 25.0.1. PyArrow
-  has tightened `datetime` handling in recent majors; if you pin a different
-  version, exercise `infer_schema_from_rows` and the `ParquetSchemaManager`
-  drift path against a sample of your real data.
 - **Incremental sync.** Spec §6 (the Phase 4 `SyncStateStore` + `updated_at`
-  filtering) is not implemented. v0.2.1 will address it.
+  filtering) is not implemented. v0.3.1 will address it.
 - **Multi-row-group per partition at scale.** Tested with single-digit row groups
   per partition. Databricks recommendations (128 MB row groups) haven't been
   load-tested at hundreds of MB per partition.
@@ -616,6 +608,16 @@ remaining items to your own integration checklist:
   `.tmp` and renames on close. A killed worker leaves only `.tmp` behind.
 - Backoff deduplication — the sync and async clients share
   `nocoly_explorer.backoff.compute_backoff` and `parse_retry_after`.
+
+### Things closed in v0.3.0
+
+- `auth_token` is now **required** in `JobSubmission` (was silently
+  optional in v0.2.x). Submissions without one get a 422 at submit
+  time, not a 401 at first Nocoly request. **This is a breaking
+  change** if your clients omit `auth_token` — update them before
+  upgrading to v0.3.0.
+- PyArrow upper bound — pinned to `<26` to match what CI exercises
+  (25.0.1). Pin and re-test when bumping.
 
 ---
 

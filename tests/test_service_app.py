@@ -49,6 +49,7 @@ def test_post_jobs_returns_job_id(client):
     r = client.post("/jobs", json={
         "host": "https://example.com",
         "worksheet_id": "ws-1",
+        "auth_token": "k:s",
         "page_size": 100,
     })
     assert r.status_code == 200
@@ -67,6 +68,7 @@ def test_get_job_status_returns_queued(client):
     submit = client.post("/jobs", json={
         "host": "https://example.com",
         "worksheet_id": "ws-1",
+        "auth_token": "k:s",
     }).json()
     job_id = submit["job_id"]
     r = client.get(f"/jobs/{job_id}")
@@ -85,6 +87,7 @@ def test_get_job_result_returns_409_when_not_ready(client):
     submit = client.post("/jobs", json={
         "host": "https://example.com",
         "worksheet_id": "ws-1",
+        "auth_token": "k:s",
     }).json()
     r = client.get(f"/jobs/{submit['job_id']}/result")
     assert r.status_code == 409
@@ -95,6 +98,7 @@ def test_post_cancel_sets_cancel_flag(client, redis_factory):
     submit = client.post("/jobs", json={
         "host": "https://example.com",
         "worksheet_id": "ws-1",
+        "auth_token": "k:s",
     }).json()
     job_id = submit["job_id"]
     r = client.post(f"/jobs/{job_id}/cancel")
@@ -116,17 +120,17 @@ def test_api_key_required_when_configured(redis_factory):
 
     app = create_app(redis_factory=redis_factory, api_key="secret-1", enqueue_func=fake_enqueue)
     client = TestClient(app)
-    r = client.post("/jobs", json={"host": "https://x", "worksheet_id": "y"})
+    r = client.post("/jobs", json={"host": "https://x", "worksheet_id": "y", "auth_token": "k:s"})
     assert r.status_code == 401
     r = client.post(
         "/jobs",
-        json={"host": "https://x", "worksheet_id": "y"},
+        json={"host": "https://x", "worksheet_id": "y", "auth_token": "k:s"},
         headers={"Authorization": "Bearer wrong"},
     )
     assert r.status_code == 401
     r = client.post(
         "/jobs",
-        json={"host": "https://x", "worksheet_id": "y"},
+        json={"host": "https://x", "worksheet_id": "y", "auth_token": "k:s"},
         headers={"Authorization": "Bearer secret-1"},
     )
     assert r.status_code == 200
@@ -138,6 +142,7 @@ def test_concurrent_submissions_get_unique_job_ids(client):
         r = client.post("/jobs", json={
             "host": "https://example.com",
             "worksheet_id": "ws-1",
+            "auth_token": "k:s",
         })
         ids.add(r.json()["job_id"])
     assert len(ids) == 5
