@@ -237,48 +237,76 @@ class AsyncWorksheetClient:
         *,
         sample_size=1,
         metadata_endpoint=None,
+        try_api=None,
     ):
         """Async version of WorksheetClient.get_worksheet_schema.
 
-        Tries the Nocoly metadata endpoint first (POST with bearer auth);
-        on failure or unrecognized shape, falls back to fetching a small
-        page and inferring types from the response.
+        Same try-API-then-fallback contract. See the sync method's
+        docstring for the full caveat about the default endpoint being
+        unverified; pass ``try_api=False`` or set
+        ``NOCOLY_SCHEMA_API_DISABLED=1`` to skip the network call.
 
-        Returns a NocolyWorksheetSchema with source="api" on success or
-        source="inferred" on the fallback path.
+        Each API attempt emits a DEBUG line on the ``nocoly_explorer.async``
+        logger with the URL and HTTP status, so you can see exactly what
+        was tried when you tail logs.
         """
         if self._session is None:
             raise AsyncClientError(
                 "Client not entered; use 'async with AsyncWorksheetClient(...)'."
             )
         target_id = worksheet_id or self.worksheet_id
-        endpoint = metadata_endpoint or (
-            "/api/v3/app/worksheets/" + target_id + "/columns"
-        )
-        url = self.base_url + endpoint
-        try:
-            async with self._session.post(url, json={}) as resp:
-                if resp.status == 200:
-                    try:
-                        payload = await resp.json()
-                    except Exception:
-                        payload = None
-                    parsed = (
-                        parse_columns_response(payload)
-                        if payload is not None
-                        else None
-                    )
-                    if parsed:
-                        return NocolyWorksheetSchema(
-                            worksheet_id=target_id,
-                            columns=parsed,
-                            source="api",
-                        )
-        except aiohttp.ClientError as exc:
-            _LOGGER.debug(
-                "async.metadata_endpoint_failed",
-                extra={"worksheet_id": target_id, "error": str(exc)},
+        # Import locally to avoid a circular import at module load.
+        from .client import _resolve_try_api
+        api_enabled = _resolve_try_api(try_api)
+
+        if api_enabled:
+            endpoint = metadata_endpoint or (
+                "/api/v3/app/worksheets/" + target_id + "/columns"
             )
+            url = self.base_url + endpoint
+            _LOGGER.debug(
+                "schema.try_api_attempt",
+                extra={"worksheet_id": target_id, "url": url},
+            )
+            try:
+                async with self._session.post(url, json={}) as resp:
+                    _LOGGER.debug(
+                        "schema.try_api_response",
+                        extra={
+                            "worksheet_id": target_id,
+                            "url": url,
+                            "status": resp.status,
+                        },
+                    )
+                    if resp.status == 200:
+                        try:
+                            payload = await resp.json()
+                        except Exception:
+                            payload = None
+                        parsed = (
+                            parse_columns_response(payload)
+                            if payload is not None
+                            else None
+                        )
+                        if parsed:
+                            return NocolyWorksheetSchema(
+                                worksheet_id=target_id,
+                                columns=parsed,
+                                source="api",
+                            )
+                        _LOGGER.debug(
+                            "schema.try_api_unrecognized_shape",
+                            extra={"worksheet_id": target_id, "url": url},
+                        )
+            except aiohttp.ClientError as exc:
+                _LOGGER.debug(
+                    "schema.try_api_error",
+                    extra={
+                        "worksheet_id": target_id,
+                        "url": url,
+                        "error": str(exc),
+                    },
+                )
 
         # Fallback: fetch a small page and infer.
         sample_rows = []

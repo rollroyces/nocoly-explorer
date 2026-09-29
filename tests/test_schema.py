@@ -338,3 +338,173 @@ class TestWorksheetClientGetSchema:
         client = _make_client(session)
         client.get_worksheet_schema(metadata_endpoint="/custom/path")
         assert any("/custom/path" in u for u in captured)
+
+
+# ---------------------------------------------------------------------------
+# Hardening: try_api flag, env var, debug logging
+# ---------------------------------------------------------------------------
+
+
+class TestTryApiFlag:
+    def test_try_api_false_skips_endpoint(self, monkeypatch):
+        """try_api=False must not call the metadata endpoint."""
+        session_calls = []
+
+        class _Session:
+            def post(self, url, **kwargs):
+                session_calls.append(url)
+                raise AssertionError(
+                    "metadata endpoint must not be called when try_api=False"
+                )
+
+        client = WorksheetClient(
+            host="https://example.com",
+            worksheet_id="ws-1",
+            credentials=CredentialPair(app_key="k", app_sign="s"),
+        )
+        client._session = _Session()
+        # Patch fetch_rows to return a sample without hitting the network.
+        monkeypatch.setattr(
+            WorksheetClient, "fetch_rows",
+            lambda self, **kwargs: [{"a": 1, "b": "x"}],
+        )
+        schema = client.get_worksheet_schema(try_api=False)
+        assert schema.source == "inferred"
+        assert session_calls == []
+
+    def test_try_api_none_uses_default(self, monkeypatch):
+        """try_api=None (default) tries the endpoint, falls back on 4xx."""
+        session_calls = []
+
+        class _Session:
+            def post(self, url, **kwargs):
+                session_calls.append(url)
+                class _Resp:
+                    ok = False
+                    status_code = 404
+                    def json(self): return {}
+                return _Resp()
+
+        client = WorksheetClient(
+            host="https://example.com",
+            worksheet_id="ws-1",
+            credentials=CredentialPair(app_key="k", app_sign="s"),
+        )
+        client._session = _Session()
+        monkeypatch.setattr(
+            WorksheetClient, "fetch_rows",
+            lambda self, **kwargs: [{"a": 1}],
+        )
+        # Default try_api=None should attempt the API (and fall back on 404).
+        schema = client.get_worksheet_schema()
+        assert schema.source == "inferred"
+        # At least one call hit the metadata endpoint (the fetch_rows fallback
+        # is the second call).
+        assert any("/columns" in u for u in session_calls)
+
+
+class TestEnvVar:
+    def test_env_var_disables_api(self, monkeypatch):
+        """NOCOLY_SCHEMA_API_DISABLED=1 must skip the metadata endpoint."""
+        monkeypatch.setenv("NOCOLY_SCHEMA_API_DISABLED", "1")
+
+        session_calls = []
+
+        class _Session:
+            def post(self, url, **kwargs):
+                session_calls.append(url)
+                raise AssertionError(
+                    "metadata endpoint must not be called when env var disables"
+                )
+
+        client = WorksheetClient(
+            host="https://example.com",
+            worksheet_id="ws-1",
+            credentials=CredentialPair(app_key="k", app_sign="s"),
+        )
+        client._session = _Session()
+        monkeypatch.setattr(
+            WorksheetClient, "fetch_rows",
+            lambda self, **kwargs: [{"a": 1}],
+        )
+        schema = client.get_worksheet_schema()
+        assert schema.source == "inferred"
+        assert session_calls == []
+
+    def test_env_var_truthy_values(self, monkeypatch):
+        """1, true, yes, on all disable the API."""
+        for value in ("1", "true", "yes", "on", "TRUE", "Yes"):
+            monkeypatch.setenv("NOCOLY_SCHEMA_API_DISABLED", value)
+            from nocoly_explorer.client import _resolve_try_api
+            assert _resolve_try_api(None) is False, f"value={value!r}"
+
+    def test_env_var_unset_or_false_keeps_api_enabled(self, monkeypatch):
+        monkeypatch.delenv("NOCOLY_SCHEMA_API_DISABLED", raising=False)
+        from nocoly_explorer.client import _resolve_try_api
+        assert _resolve_try_api(None) is True
+
+        monkeypatch.setenv("NOCOLY_SCHEMA_API_DISABLED", "0")
+        assert _resolve_try_api(None) is True
+        monkeypatch.setenv("NOCOLY_SCHEMA_API_DISABLED", "no")
+        assert _resolve_try_api(None) is True
+
+    def test_explicit_arg_overrides_env_var(self, monkeypatch):
+        """Explicit try_api=True beats env var; try_api=False beats env var."""
+        from nocoly_explorer.client import _resolve_try_api
+        monkeypatch.setenv("NOCOLY_SCHEMA_API_DISABLED", "1")
+        # env says disabled, but explicit override wins.
+        assert _resolve_try_api(True) is True
+        monkeypatch.delenv("NOCOLY_SCHEMA_API_DISABLED", raising=False)
+        assert _resolve_try_api(False) is False
+
+
+class TestDebugLogging:
+    def test_debug_log_emitted_on_attempt(self, caplog):
+        """A DEBUG line is logged with the URL when the API is attempted."""
+        from nocoly_explorer.client import WorksheetClient
+
+        class _Resp:
+            ok = True
+            status_code = 200
+            def json(self):
+                return [{"name": "x", "type": "string"}]
+
+        class _Session:
+            def post(self, url, **kwargs):
+                return _Resp()
+
+        client = WorksheetClient(
+            host="https://example.com",
+            worksheet_id="ws-1",
+            credentials=CredentialPair(app_key="k", app_sign="s"),
+        )
+        client._session = _Session()
+
+        with caplog.at_level("DEBUG", logger="nocoly_explorer.client"):
+            client.get_worksheet_schema()
+
+        # At least one debug log mentions the URL.
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG"]
+        assert any(
+            getattr(r, "url", None) and "/columns" in r.url
+            for r in debug_records
+        ), f"no debug log with /columns URL: {[r.__dict__ for r in debug_records]}"
+
+    def test_no_debug_log_when_try_api_false(self, caplog, monkeypatch):
+        """No DEBUG log when try_api=False (no API attempt made)."""
+        client = WorksheetClient(
+            host="https://example.com",
+            worksheet_id="ws-1",
+            credentials=CredentialPair(app_key="k", app_sign="s"),
+        )
+        monkeypatch.setattr(
+            WorksheetClient, "fetch_rows",
+            lambda self, **kwargs: [{"a": 1}],
+        )
+        with caplog.at_level("DEBUG", logger="nocoly_explorer.client"):
+            client.get_worksheet_schema(try_api=False)
+        # No "schema.try_api_*" records should appear.
+        assert not any(
+            r.name.startswith("schema.")
+            for r in caplog.records
+        )

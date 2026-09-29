@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import email.utils
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional
 
@@ -51,6 +52,32 @@ def _parse_retry_after(value: str) -> Optional[float]:
         return max(0.0, delta)
     except (ValueError, TypeError):
         return None
+
+
+
+
+
+def _is_truthy_env(name: str) -> bool:
+    """Return True if environment variable ``name`` is set to a truthy value."""
+    value = os.environ.get(name)
+    if value is None:
+        return False
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _resolve_try_api(explicit: Optional[bool]) -> bool:
+    """Resolve whether the schema API attempt is enabled.
+
+    Order of precedence:
+    1. ``explicit`` argument if not None.
+    2. ``NOCOLY_SCHEMA_API_DISABLED`` env var (any truthy value disables).
+    3. Default: True (API attempt enabled).
+    """
+    if explicit is not None:
+        return bool(explicit)
+    if _is_truthy_env("NOCOLY_SCHEMA_API_DISABLED"):
+        return False
+    return True
 
 
 class WorksheetClient:
@@ -151,54 +178,139 @@ class WorksheetClient:
         *,
         sample_size: int = 1,
         metadata_endpoint: Optional[str] = None,
+        try_api: Optional[bool] = None,
         timeout_seconds: Optional[float] = None,
     ) -> NocolyWorksheetSchema:
         """Discover the worksheet's column schema and data types.
 
-        Tries the Nocoly metadata endpoint first (``metadata_endpoint`` or
-        the default ``/api/v3/app/worksheets/{id}/columns``); if the request
-        fails or the response shape is unrecognized, falls back to fetching
-        ``sample_size`` rows and inferring types.
+        Behavior:
+        1. **API attempt** (skippable). Calls the Nocoly metadata endpoint
+           (``metadata_endpoint`` or the default
+           ``/api/v3/app/worksheets/{id}/columns``). On success with a
+           recognized response shape, returns ``source="api"``.
+        2. **Fallback to inference.** If the API call fails, the endpoint
+           doesn't exist, the response is unparseable, or the API attempt
+           is disabled, fetches ``sample_size`` rows and infers column
+           names + PyArrow-compatible types.
 
-        Returns a :class:`NocolyWorksheetSchema` with ``source`` set to
-        ``"api"`` on success or ``"inferred"`` on the fallback path.
+        Returns a :class:`NocolyWorksheetSchema` whose ``source`` field
+        indicates which path produced the result.
+
+        CAVEAT — the default endpoint is **unverified**. Nocoly v3's
+        documented endpoint set in this repo only covers
+        ``/api/v3/app/worksheets/{id}/rows/list``. The default
+        ``/columns`` path is an educated guess at a metadata endpoint;
+        real Nocoly deployments may use a different URL or expose column
+        metadata only through the rows endpoint. Pass an explicit
+        ``metadata_endpoint`` once you know the right URL, or set
+        ``try_api=False`` to skip the network call entirely.
+
+        Skip the API attempt via either:
+        - ``try_api=False`` on the call, or
+        - environment variable ``NOCOLY_SCHEMA_API_DISABLED=1`` (any
+          truthy value: 1, true, yes, on).
+
+        Each API attempt emits a DEBUG line on the call to its logger
+        (``nocoly_explorer.client``) with the URL and HTTP status, so
+        you can see exactly what was tried when you tail logs.
         """
         target_id = worksheet_id or self.worksheet_id
-        endpoint = metadata_endpoint or f"/api/v3/app/worksheets/{target_id}/columns"
-        url = f"{self.base_url}{endpoint}"
-        timeout = max(
-            0.0, timeout_seconds if timeout_seconds is not None else self.timeout_seconds
-        )
-        try:
-            response = self._session.post(
-                url,
-                json={},
-                headers=self._build_headers(),
-                timeout=timeout,
-                verify=self.verify_ssl,
-            )
-            if response.ok:
-                try:
-                    payload = response.json()
-                except ValueError:
-                    payload = None
-                parsed = parse_columns_response(payload) if payload is not None else None
-                if parsed:
-                    return NocolyWorksheetSchema(
-                        worksheet_id=target_id, columns=parsed, source="api"
-                    )
-        except requests.RequestException as exc:
-            self._logger.debug(
-                "Worksheet metadata endpoint failed; falling back to inference",
-                extra={"worksheet_id": target_id, "error": str(exc)},
-            )
+        api_enabled = _resolve_try_api(try_api)
 
-        # Fallback: fetch a small page and infer types.
-        rows = self.fetch_rows(
-            page_size=max(sample_size, 1),
-            max_pages=1,
-        )
-        sample = rows[: max(sample_size, 1)]
+        rows_for_inference: Optional[List[Dict[str, Any]]] = None
+
+        if api_enabled:
+            endpoint = (
+                metadata_endpoint
+                or f"/api/v3/app/worksheets/{target_id}/columns"
+            )
+            url = f"{self.base_url}{endpoint}"
+            timeout = max(
+                0.0,
+                timeout_seconds if timeout_seconds is not None
+                else self.timeout_seconds,
+            )
+            self._logger.debug(
+                "schema.try_api_attempt",
+                extra={"worksheet_id": target_id, "url": url, "timeout": timeout},
+            )
+            try:
+                response = self._session.post(
+                    url,
+                    json={},
+                    headers=self._build_headers(),
+                    timeout=timeout,
+                    verify=self.verify_ssl,
+                )
+                status_code = getattr(response, "status_code", None)
+                self._logger.debug(
+                    "schema.try_api_response",
+                    extra={
+                        "worksheet_id": target_id,
+                        "url": url,
+                        "status": status_code,
+                    },
+                )
+                if response.ok:
+                    try:
+                        payload = response.json()
+                    except ValueError:
+                        payload = None
+                    parsed = (
+                        parse_columns_response(payload)
+                        if payload is not None
+                        else None
+                    )
+                    if parsed:
+                        return NocolyWorksheetSchema(
+                            worksheet_id=target_id,
+                            columns=parsed,
+                            source="api",
+                        )
+                    self._logger.debug(
+                        "schema.try_api_unrecognized_shape",
+                        extra={"worksheet_id": target_id, "url": url},
+                    )
+            except requests.RequestException as exc:
+                self._logger.debug(
+                    "schema.try_api_error",
+                    extra={
+                        "worksheet_id": target_id,
+                        "url": url,
+                        "error": str(exc),
+                    },
+                )
+
+            # Fall through to inference. To avoid a second HTTP round-trip
+            # for the sample, we re-use the page we would have fetched
+            # below — but only if the user asked for exactly the default
+            # sample size. If they asked for more, fetch again later.
+            if sample_size <= 1:
+                try:
+                    rows_for_inference = self.fetch_rows(
+                        page_size=1, max_pages=1,
+                    )
+                except NocolyError as exc:
+                    self._logger.debug(
+                        "schema.inference_fetch_error",
+                        extra={"worksheet_id": target_id, "error": str(exc)},
+                    )
+
+        # Fallback path: inference.
+        if rows_for_inference is None:
+            try:
+                rows_for_inference = self.fetch_rows(
+                    page_size=max(sample_size, 1),
+                    max_pages=1,
+                )
+            except NocolyError as exc:
+                self._logger.debug(
+                    "schema.inference_fetch_error",
+                    extra={"worksheet_id": target_id, "error": str(exc)},
+                )
+                raise
+
+        sample = rows_for_inference[: max(sample_size, 1)]
         if not sample:
             raise NocolyError(
                 f"No rows returned from worksheet {target_id!r}; "
