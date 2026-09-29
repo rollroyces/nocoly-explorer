@@ -9,11 +9,11 @@ import logging
 import random
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import Any, AsyncIterator, Dict, List, Optional, Set
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Set
 
 import aiohttp
 
-from .exceptions import NocolyError
+from .exceptions import JobCancelled, NocolyError
 
 _LOGGER = logging.getLogger("nocoly_explorer.async")
 
@@ -232,12 +232,18 @@ class AsyncWorksheetClient:
         page_size: int = 200,
         max_pages: int = 1000,
         filter_criteria: Optional[Dict[str, Any]] = None,
+        cancel_check: Optional[Callable[[], Awaitable[bool]]] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch all pages with bounded concurrency, return rows in original order.
 
         Stops dispatching new pages once the server signals end-of-data via a
         short/empty page, but waits for in-flight pages to complete (cancel is
         a last resort only if the consumer cancels).
+
+        ``cancel_check`` is an optional async callable returning ``True`` to
+        request cooperative cancellation. Awaited at the top of each dispatch
+        loop iteration; on ``True`` any in-flight pages are cancelled and
+        :class:`JobCancelled` is raised.
         """
         if page_size < 1 or page_size > self.max_page_size:
             raise ValueError(f"page_size must be in [1, {self.max_page_size}] (got {page_size})")
@@ -259,6 +265,15 @@ class AsyncWorksheetClient:
 
         try:
             while next_page <= max_pages or in_flight:
+                # Cooperative cancellation: bail before dispatching more pages.
+                if cancel_check is not None and await cancel_check():
+                    for t in in_flight:
+                        t.cancel()
+                    if in_flight:
+                        await asyncio.gather(*in_flight, return_exceptions=True)
+                    raise JobCancelled(
+                        "Cancellation requested before completion"
+                    )
                 # Dispatch new pages up to concurrency (but only while we don't
                 # already know the server has ended).
                 while (
@@ -326,8 +341,14 @@ class AsyncWorksheetClient:
         page_size: int = 200,
         max_pages: int = 1000,
         filter_criteria: Optional[Dict[str, Any]] = None,
+        cancel_check: Optional[Callable[[], Awaitable[bool]]] = None,
     ) -> AsyncIterator[List[Dict[str, Any]]]:
         """Yield pages in order, one at a time.
+
+        ``cancel_check`` is an optional async callable returning ``True`` to
+        request cooperative cancellation. Awaited between pages; on ``True``
+        the generator raises :class:`JobCancelled` and any in-flight pages
+        are cancelled.
 
         Memory: in-flight bounded by `concurrency × page_size` rows; we may
         buffer up to `max_pages × page_size` rows while waiting for an
@@ -357,6 +378,15 @@ class AsyncWorksheetClient:
                 # If we've passed the terminator, stop.
                 if terminator_page is not None and next_yield > terminator_page:
                     break
+                # Cooperative cancellation: check before dispatching more pages.
+                if cancel_check is not None and await cancel_check():
+                    for t in in_flight:
+                        t.cancel()
+                    if in_flight:
+                        await asyncio.gather(*in_flight, return_exceptions=True)
+                    raise JobCancelled(
+                        "Cancellation requested before completion"
+                    )
                 # Dispatch new pages up to concurrency (but only while we don't
                 # already know the server has ended).
                 while (

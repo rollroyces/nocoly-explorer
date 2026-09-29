@@ -45,3 +45,11 @@ class JobNotFound(ServiceError):
 
 class JobNotReady(ServiceError):
     """Raised when /result is fetched before job completion."""
+
+class JobCancelled(NocolyError):
+    """Raised when a cooperative ``cancel_check`` returns ``True`` mid-pagination.
+
+    ``stream_async`` and ``fetch_all_async`` raise this when their
+    ``cancel_check`` callable flips to ``True``. Catch ``NocolyError`` for
+    general handling, or ``JobCancelled`` for cancellation-specific paths.
+    """

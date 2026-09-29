@@ -8,12 +8,14 @@ from pathlib import Path
 from typing import Any, Dict
 
 from ..async_client import AsyncWorksheetClient
+from ..exceptions import JobCancelled
 from ..streaming import (
     PartitionSpec,
     ParquetExportOptions,
     StreamingExportConfig,
     StreamingExporter,
 )
+from ..streaming.exporter import _NoopClientAdapter
 from .state import JobState
 
 _LOGGER = logging.getLogger("nocoly_explorer.service.worker")
@@ -44,6 +46,9 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
     rows_written = 0
     artifact_path: str = ""
 
+    async def _is_cancelled() -> bool:
+        return await state.is_cancel_requested(job_id)
+
     try:
         if sink == "parquet_local":
             output_path.mkdir(parents=True, exist_ok=True)
@@ -54,52 +59,53 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
             )
             options = ParquetExportOptions()
 
-            # Fetch all pages asynchronously in this event loop, then write
-            # Parquet synchronously. This keeps the StreamingExporter's sync
-            # API and avoids cross-thread event-loop issues with aiohttp.
+            # Stream pages directly into the Parquet writer. The exporter
+            # consumes AsyncWorksheetClient.fetch_pages_async and writes
+            # each page through the row-group buffer, so total memory is
+            # bounded by row_group_bytes rather than by the full row count.
+            # Cooperative cancellation is honored between pages via the
+            # shared cancel_check callback.
             async with AsyncWorksheetClient(
                 base_url=host,
                 auth_token=auth_token,
                 worksheet_id=worksheet_id,
                 concurrency=concurrency,
             ) as aclient:
-                all_rows = await aclient.fetch_all_async(
-                    page_size=page_size,
-                    max_pages=max_pages,
+                exporter = StreamingExporter(
+                    client=_NoopClientAdapter(),
+                    config=StreamingExportConfig(
+                        output_dir=output_path,
+                        worksheet_id=worksheet_id,
+                        options=options,
+                        partition=partition,
+                    ),
                 )
-
-                # Cooperative cancellation between pages.
-                if await state.is_cancel_requested(job_id):
+                try:
+                    result = await exporter.stream_async(
+                        aclient,
+                        page_size=page_size,
+                        max_pages=max_pages,
+                        cancel_check=_is_cancelled,
+                    )
+                except JobCancelled:
                     await state.set_status(job_id, "cancelled", error="cancel requested")
                     return {"status": "cancelled"}
 
-                await state.set_status(job_id, "running", progress_pct=50.0, rows_fetched=len(all_rows))
+                rows_written = result.rows_written
+                artifact_path = str(output_path)
 
-            # Sync Parquet write happens outside the async context.
-            exporter = StreamingExporter(
-                client=_SyncClientAdapter(all_rows),
-                config=StreamingExportConfig(
-                    output_dir=output_path,
-                    worksheet_id=worksheet_id,
-                    options=options,
-                    partition=partition,
-                ),
-            )
-            result = exporter.export()
-            rows_written = result.rows_written
-            artifact_path = str(output_path)
-
-            await state.set_status(
-                job_id, "succeeded", progress_pct=100.0, rows_fetched=rows_written
-            )
-            await state.set_result(
-                job_id, artifact_path, rows_written=rows_written
-            )
-            return {
-                "status": "succeeded",
-                "rows_written": rows_written,
-                "artifact_path": artifact_path,
-            }
+                # Mark 100% on success.
+                await state.set_status(
+                    job_id, "succeeded", progress_pct=100.0, rows_fetched=rows_written
+                )
+                await state.set_result(
+                    job_id, artifact_path, rows_written=rows_written
+                )
+                return {
+                    "status": "succeeded",
+                    "rows_written": rows_written,
+                    "artifact_path": artifact_path,
+                }
 
         else:
             await state.set_status(job_id, "failed", error=f"unsupported sink: {sink}")
@@ -110,15 +116,6 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
         await state.set_status(job_id, "failed", error=str(exc)[:500])
         return {"status": "failed", "error": str(exc)[:500]}
 
-
-class _SyncClientAdapter:
-    """In-memory WorksheetClient that returns pre-fetched rows to the sync exporter."""
-
-    def __init__(self, rows):
-        self._rows = list(rows)
-
-    def fetch_rows(self, **_kwargs):
-        return self._rows
 
 
 async def arq_startup(ctx: Dict[str, Any]) -> None:

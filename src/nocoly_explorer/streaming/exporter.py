@@ -5,11 +5,21 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Awaitable,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    Protocol,
+    Sequence,
+)
 
 import pyarrow as pa
 
-from ..exceptions import OutputValidationError
+from ..exceptions import JobCancelled, OutputValidationError
 from .buffer import RowGroupBuffer
 from .options import (
     ParquetExportOptions,
@@ -20,6 +30,9 @@ from .options import (
 from .partitions import PartitionRouter
 from .schema import ParquetSchemaManager
 from .writer import ParquetPartitionWriter
+
+if TYPE_CHECKING:  # pragma: no cover - only for type hints
+    from ..async_client import AsyncWorksheetClient
 
 _LOGGER = logging.getLogger("nocoly_explorer.streaming")
 
@@ -107,6 +120,59 @@ class StreamingExporter:
             bytes_written=self._bytes_written,
         )
 
+    async def stream_async(
+        self,
+        client: "AsyncWorksheetClient",
+        *,
+        page_size: int = 200,
+        max_pages: int = 1000,
+        filter_criteria: Optional[Dict[str, Any]] = None,
+        cancel_check: Optional[Callable[[], Awaitable[bool]]] = None,
+    ) -> ExportResult:
+        """Stream pages from an ``AsyncWorksheetClient`` into Parquet on disk.
+
+        Each page yielded by ``client.fetch_pages_async()`` is ingested into
+        the schema manager / partition router / row-group buffer as soon as
+        it arrives. Total memory stays bounded by
+        ``row_group_bytes * partitions`` plus the in-flight pages
+        (``concurrency * page_size`` rows at most).
+
+        ``cancel_check`` is an optional async callable returning ``True`` to
+        request cooperative cancellation. Checked before each new page; on
+        ``True``, all open writers are flushed/closed and :class:`JobCancelled`
+        is raised. Writers are also flushed/closed on any other exception so
+        partial files are not left dangling.
+
+        The ``client`` argument is the ``AsyncWorksheetClient`` (or any
+        object exposing ``fetch_pages_async``); ``self.client`` is not
+        consulted on this code path.
+        """
+        try:
+            async for page in client.fetch_pages_async(
+                page_size=page_size,
+                max_pages=max_pages,
+                filter_criteria=filter_criteria,
+                cancel_check=cancel_check,
+            ):
+                if cancel_check is not None and await cancel_check():
+                    raise JobCancelled(
+                        "Cancellation requested mid-stream"
+                    )
+                self._ingest(page)
+        finally:
+            # Always flush + close, even on cancel/error, so writers do not
+            # leave dangling file handles.
+            try:
+                self._flush_all()
+            finally:
+                self._close_all()
+        return ExportResult(
+            rows_written=self._rows_seen,
+            partitions={k: w.rows_written for k, w in self._writers.items()},
+            output_dir=self.output_dir,
+            bytes_written=self._bytes_written,
+        )
+
     def _ingest(self, rows: Sequence[Dict[str, Any]]) -> None:
         if not rows:
             return
@@ -165,3 +231,18 @@ class StreamingExporter:
     def _close_all(self) -> None:
         for writer in self._writers.values():
             writer.close()
+
+
+class _NoopClientAdapter:
+    """No-op ``WorksheetClientLike`` for use with :meth:`StreamingExporter.stream_async`.
+
+    ``stream_async`` never calls ``fetch_rows`` on ``self.client``; this
+    adapter makes the contract explicit and keeps static checkers happy when
+    constructing an exporter without a worksheet client.
+    """
+
+    def fetch_rows(self, **_kwargs):  # pragma: no cover - never invoked
+        raise RuntimeError(
+            "StreamingExporter was constructed for stream_async; "
+            "do not call export() — use stream_async(client)."
+        )
