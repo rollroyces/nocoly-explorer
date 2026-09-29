@@ -25,7 +25,6 @@ class JobNotReady(ServiceError):
 class SinkType(str, Enum):
     PARQUET_LOCAL = "parquet_local"
     PARQUET_S3 = "parquet_s3"
-    JSON_LOCAL = "json_local"
 
 
 class Granularity(str, Enum):

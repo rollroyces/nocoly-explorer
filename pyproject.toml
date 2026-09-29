@@ -15,8 +15,10 @@ spark = ["pyspark>=3.4.0"]
 streaming = ["pyarrow>=14.0.0"]
 async = ["aiohttp>=3.9.0"]
 service = [
-    "fastapi>=0.110.0",
-    "arq>=0.25.0",
+    # FastAPI 1.0 may ship breaking changes; pin until tested.
+    "fastapi>=0.110.0,<1.0",
+    # arq 0.26 may introduce behavior changes; pin and re-test on bump.
+    "arq>=0.25.0,<0.26",
     "uvicorn>=0.27.0",
     "httpx>=0.27.0",
 ]

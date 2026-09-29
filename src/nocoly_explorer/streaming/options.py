@@ -79,18 +79,31 @@ def validate_output_dir(path: Union[str, Path]) -> Path:
     return p
 
 
-def resolve_partition_path(output_dir: Path, partition_key: str) -> Path:
+def resolve_partition_path(output_dir, partition_key: str):
     """Resolve a Hive-style partition key to a directory under output_dir.
 
     Partition keys look like 'created_date=2026-09-28'. Path traversal and
     absolute paths are rejected to keep the export sandboxed.
+
+    Accepts either a ``pathlib.Path`` (local filesystem) or a ``str``
+    starting with a URI scheme such as ``s3://bucket/key/`` (any
+    ``pyarrow.fs.FileSystem``-compatible destination). String-typed
+    output dirs are concatenated without filesystem-specific path
+    resolution.
     """
     if not _PARTITION_KEY_RE.match(partition_key):
         raise ValueError(
             f"Invalid partition key {partition_key!r}; expected 'column=value' with safe characters."
         )
-    partition_path = (output_dir / partition_key).resolve()
-    output_resolved = output_dir.resolve()
-    if not str(partition_path).startswith(str(output_resolved) + "/"):
-        raise ValueError(f"Partition key {partition_key!r} escapes output_dir")
-    return partition_path
+    if isinstance(output_dir, Path):
+        partition_path = (output_dir / partition_key).resolve()
+        output_resolved = output_dir.resolve()
+        if not str(partition_path).startswith(str(output_resolved) + "/"):
+            raise ValueError(f"Partition key {partition_key!r} escapes output_dir")
+        return partition_path
+    # Non-Path destination (e.g. s3:// URI). Concatenate as strings,
+    # preserving the trailing slash on the base if present.
+    base = str(output_dir)
+    if not base.endswith("/"):
+        base = base + "/"
+    return base + partition_key

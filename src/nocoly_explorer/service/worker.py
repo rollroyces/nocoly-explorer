@@ -50,8 +50,17 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
         return await state.is_cancel_requested(job_id)
 
     try:
-        if sink == "parquet_local":
-            output_path.mkdir(parents=True, exist_ok=True)
+        if sink in ("parquet_local", "parquet_s3"):
+            if sink == "parquet_s3":
+                # Lazy import to keep pyarrow.fs optional for non-S3 users.
+                import pyarrow.fs as pafs
+                filesystem, output_path = pafs.S3FileSystem.from_uri(str(output_path))
+                # S3 has no directories; pass the URI string through.
+                export_output = output_path  # str, not Path
+            else:
+                output_path.mkdir(parents=True, exist_ok=True)
+                filesystem = None
+                export_output = output_path
             partition = (
                 PartitionSpec(column=partition_col, granularity=partition_gran)
                 if partition_col
@@ -74,10 +83,11 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
                 exporter = StreamingExporter(
                     client=_NoopClientAdapter(),
                     config=StreamingExportConfig(
-                        output_dir=output_path,
+                        output_dir=export_output,
                         worksheet_id=worksheet_id,
                         options=options,
                         partition=partition,
+                        filesystem=filesystem,
                     ),
                 )
                 try:
@@ -92,7 +102,7 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
                     return {"status": "cancelled"}
 
                 rows_written = result.rows_written
-                artifact_path = str(output_path)
+                artifact_path = str(export_output)
 
                 # Mark 100% on success.
                 await state.set_status(
@@ -108,8 +118,10 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
                 }
 
         else:
-            await state.set_status(job_id, "failed", error=f"unsupported sink: {sink}")
-            return {"status": "failed", "error": f"unsupported sink: {sink}"}
+            await state.set_status(
+                job_id, "failed", error=f"unsupported sink: {sink!r}; expected 'parquet_local' or 'parquet_s3'"
+            )
+            return {"status": "failed", "error": f"unsupported sink: {sink!r}"}
 
     except Exception as exc:
         _LOGGER.exception("worker.run_job failed", extra={"job_id": job_id})

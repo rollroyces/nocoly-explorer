@@ -10,6 +10,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from .auth import CredentialPair
+from .backoff import compute_backoff, parse_retry_after
 from .exceptions import NocolyError
 from .schema import (
     NocolyWorksheetSchema,
@@ -26,35 +27,6 @@ except ModuleNotFoundError as exc:  # pragma: no cover - depends on env
 # Per Nocoly v3 docs, page size is hard-capped server-side. Validate on the
 # client side to fail fast with a clear message.
 MAX_PAGE_SIZE = 1000
-
-
-def _parse_retry_after(value: str) -> Optional[float]:
-    """Parse a Retry-After header value (seconds or HTTP-date). Returns None if invalid."""
-    if not value:
-        return None
-    value = value.strip()
-    # delta-seconds form
-    try:
-        seconds = float(value)
-        if seconds >= 0:
-            return seconds
-    except ValueError:
-        pass
-    # HTTP-date form
-    try:
-        target = email.utils.parsedate_to_datetime(value)
-        if target is None:
-            return None
-        now = datetime.datetime.now(datetime.timezone.utc)
-        if target.tzinfo is None:
-            target = target.replace(tzinfo=datetime.timezone.utc)
-        delta = (target - now).total_seconds()
-        return max(0.0, delta)
-    except (ValueError, TypeError):
-        return None
-
-
-
 
 
 def _is_truthy_env(name: str) -> bool:
@@ -372,7 +344,7 @@ class WorksheetClient:
 
             # Honor Retry-After header (I6). After honoring, fall back to
             # exponential backoff capped at max_wait_seconds (I5).
-            retry_after = _parse_retry_after(response.headers.get("Retry-After", ""))
+            retry_after = parse_retry_after(response.headers.get("Retry-After", ""), max_wait_seconds=self.max_wait_seconds)
             if response.status_code in (429, 503) and retry_after is not None:
                 self._logger.warning(
                     "Worksheet API rate-limited; honoring Retry-After=%.1fs",
