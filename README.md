@@ -8,9 +8,9 @@
 
 <div align="center">
 
+[![Release](https://img.shields.io/badge/release-v0.4.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.4.0)
 [![Tests](https://img.shields.io/badge/tests-263%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue)]()
-[![Release](https://img.shields.io/badge/release-v0.4.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.4.0)
 [![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.4.0/nocoly_explorer-0.4.0-py3-none-any.whl)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache%202.0-lightgrey)]()
 
@@ -27,6 +27,77 @@ the same core client:
   from n8n / Airflow / schedulers (v0.2.0)
 - 🟠 **`get_worksheet_schema`** — discover column names + data types directly from
   Nocoly, with sample-based inference fallback (v0.2.0)
+
+---
+
+## Quick start
+
+```bash
+pip install "nocoly-explorer[streaming,async]"
+```
+
+```python
+import os
+from nocoly_explorer import WorksheetExporter
+
+df = WorksheetExporter().export(
+    host="https://your-nocoly-host",
+    worksheet_id="ws_123",
+    output_type="dataframe",
+    app_key=os.environ["NOCOLY_APP_KEY"],
+    app_sign=os.environ["NOCOLY_APP_SIGN"],
+)
+print(df.head())
+```
+
+For partitioned Parquet with memory-bounded streaming:
+
+```python
+import asyncio
+from nocoly_explorer import AsyncWorksheetClient, StreamingExporter, StreamingExportConfig
+
+async def main():
+    async with AsyncWorksheetClient(
+        base_url="https://your-nocoly-host",
+        auth_token=f"{os.environ['NOCOLY_APP_KEY']}:{os.environ['NOCOLY_APP_SIGN']}",
+        worksheet_id="ws_123",
+    ) as client:
+        exporter = StreamingExporter(
+            client=client,  # stream_async ignores this
+            config=StreamingExportConfig(
+                output_dir="/tmp/nocoly-export",
+                worksheet_id="ws_123",
+            ),
+        )
+        result = await exporter.stream_async(client, page_size=200)
+        print(f"wrote {result.rows_written} rows to {result.partitions}")
+
+asyncio.run(main())
+```bash
+
+See [`examples/`](examples/) for six runnable scripts covering each layer, or jump to a
+specific section below.
+
+---
+
+## Contents
+
+- [Quick start](#quick-start)
+- [What you get](#what-you-get)
+- [How a job flows](#how-a-job-flows)
+- [Live demo](#live-demo)
+- [Installation](#installation)
+- [Layer 1 — `WorksheetExporter`](#layer-1--worksheetexporter-v011)
+- [Discovering the worksheet schema](#discovering-the-worksheet-schema-v020)
+- [Incremental sync](#incremental-sync-v040)
+- [Layer 2 — `StreamingExporter` + `AsyncWorksheetClient`](#layer-2--streamingexporter--asyncworksheetclient-v020)
+- [Layer 3 — `create_app` + `run_job`](#layer-3--create_app--run_job-v020)
+- [Configuration](#configuration)
+- [Development](#development)
+- [Examples](#examples)
+- [Project layout](#project-layout)
+- [Honest gaps](#honest-gaps)
+- [License](#license)
 
 ---
 
@@ -162,7 +233,7 @@ df = WorksheetExporter().export(
 
 ### Architecture (Layer 1)
 
-```
+```python
 WorksheetExporter
  ├── EnvironmentDetector       (Databricks vs. local)
  ├── CredentialProvider        (Databricks secrets vs. env vs. config)
@@ -201,7 +272,7 @@ for col in schema.columns:
 # Round-trip to JSON for reuse
 with open("ws_123.schema.json", "w") as f:
     f.write(schema.to_json())
-```
+```bash
 
 What you get back (`NocolyWorksheetSchema`):
 
@@ -293,7 +364,7 @@ all_rows = exporter.export(
     state_store=store,
     force_full=True,
 )
-```
+```python
 
 For the FastAPI service, pass `state_store_kind="redis"` in
 `JobSubmission` and the worker will use a `RedisSyncStateStore`
@@ -378,7 +449,7 @@ result = StreamingExporter(
 print(result)
 # ExportResult(rows_written=487, partitions_written=2,
 #               files_written=2, output_dir='/mnt/datalake/nocoly/ws_123')
-```
+```python
 
 `StreamingExporter.export()` is synchronous and expects a sync `WorksheetClientLike`.
 To use it directly with `AsyncWorksheetClient`, the streaming exporter exposes
@@ -444,7 +515,7 @@ StreamingExporter(
     client=sync_client,                  # WorksheetClientLike Protocol
     config=StreamingExportConfig(output_dir="...", worksheet_id="...", options=...),
 ).export()
-```
+```bash
 
 The exporter accepts any object with `.fetch_rows()` (the `WorksheetClientLike`
 Protocol) — sync or async, real or fake.
@@ -491,7 +562,7 @@ curl -X POST http://localhost:8080/jobs \
     }
   }'
 # {"job_id": "a1b2c3..."}
-```
+```python
 
 ### Poll status
 
@@ -518,7 +589,7 @@ curl http://localhost:8080/jobs/a1b2c3... \
 If you set `api_key=...` on `create_app` (or set `NOCOLY_SERVICE_API_KEY` in
 the environment of your `uvicorn` process), every endpoint requires:
 
-```
+```bash
 Authorization: Bearer <api_key>
 ```
 
@@ -537,7 +608,7 @@ The Nocoly API auth uses an `env_prefix` strategy. The default prefix is
 ```bash
 export NOCOLY_APP_KEY="..."
 export NOCOLY_APP_SIGN="..."
-```
+```text
 
 Or, for multiple environments, use a prefix:
 
@@ -583,7 +654,7 @@ pytest tests/test_schema.py -v
 
 # Run the demo
 ./scripts/demo.py
-```
+```python
 
 ### Examples
 
@@ -631,7 +702,7 @@ src/nocoly_explorer/
      ├── partitions.py        #   PartitionRouter + cardinality guard
      ├── schema.py            #   ParquetSchemaManager + drift policy
      └── writer.py            #   ParquetPartitionWriter (append mode)
-```
+```python
 
 ---
 
