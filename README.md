@@ -8,10 +8,10 @@
 
 <div align="center">
 
-[![Tests](https://img.shields.io/badge/tests-245%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-263%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue)]()
-[![Release](https://img.shields.io/badge/release-v0.3.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.3.0)
-[![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.3.0/nocoly_explorer-0.3.0-py3-none-any.whl)
+[![Release](https://img.shields.io/badge/release-v0.4.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.4.0)
+[![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.4.0/nocoly_explorer-0.4.0-py3-none-any.whl)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache%202.0-lightgrey)]()
 
 </div>
@@ -250,6 +250,69 @@ schema = infer_schema_from_rows(rows, sample_size=256, worksheet_id="ws_123")
 Type widening makes heterogeneous columns safe — a column that mixes `int` and
 `float` values resolves to `number`, not `integer`.
 
+---
+
+## Incremental sync (v0.4.0)
+
+`WorksheetExporter.export(incremental=True, ...)` (and the equivalent
+`incremental=True` flag on `JobSubmission`) make re-exports fetch only
+rows newer than a persisted **watermark**. The watermark is the max
+`_updatedAt` value seen across the last successful run, stored in a
+`SyncStateStore`.
+
+```python
+from nocoly_explorer import WorksheetExporter, FileSyncStateStore
+
+store = FileSyncStateStore()  # default: ./.nocoly-state/default.json
+exporter = WorksheetExporter()
+
+# First run: full export, watermark written.
+rows = exporter.export(
+    host="https://bpm-uat.chinachemgroup.com",
+    worksheet_id="ws_123",
+    output_type="json",
+    incremental=True,
+    state_store=store,
+)
+
+# Second run: only rows with _updatedAt > the watermark.
+more_rows = exporter.export(
+    host="https://bpm-uat.chinachemgroup.com",
+    worksheet_id="ws_123",
+    output_type="json",
+    incremental=True,
+    state_store=store,
+)
+
+# Full re-export, ignore the watermark.
+all_rows = exporter.export(
+    host="https://bpm-uat.chinachemgroup.com",
+    worksheet_id="ws_123",
+    output_type="json",
+    incremental=True,
+    state_store=store,
+    force_full=True,
+)
+```
+
+For the FastAPI service, pass `state_store_kind="redis"` in
+`JobSubmission` and the worker will use a `RedisSyncStateStore`
+sharing the same Redis instance as the job state.
+
+**Out-of-order safety:** if a row arrives with `_updatedAt` earlier
+than the watermark, it is included but the watermark does not move
+backward. This prevents late deliveries from triggering infinite
+re-runs.
+
+**Concurrency:** `FileSyncStateStore` uses an `fcntl.flock` lockfile
+on the data directory; `RedisSyncStateStore` uses `SET NX EX`. Two
+parallel runs on the same worksheet serialize.
+
+**Custom update column:** default is `_updatedAt`; pass
+`updated_at_column="modified_at"` (or whatever the column is) on
+either the export call or `JobSubmission`.
+
+---
 ---
 
 ## Layer 2 — `StreamingExporter` + `AsyncWorksheetClient` (v0.2.0)
@@ -591,8 +654,8 @@ remaining items to your own integration checklist:
   `.tmp` + rename pattern; S3 and other non-local destinations fall back to
   direct writes because atomic rename isn't portable. A future commit could
   implement upload-then-promote via `pyarrow.fs` copy semantics if needed.
-- **Incremental sync.** Spec §6 (the Phase 4 `SyncStateStore` + `updated_at`
-  filtering) is not implemented. v0.3.1 will address it.
+- **Incremental sync** — landed in v0.4.0 via `FileSyncStateStore` and
+  `RedisSyncStateStore`. See the "Incremental sync" section below.
 - **Multi-row-group per partition at scale.** Tested with single-digit row groups
   per partition. Databricks recommendations (128 MB row groups) haven't been
   load-tested at hundreds of MB per partition.
@@ -618,6 +681,16 @@ remaining items to your own integration checklist:
   upgrading to v0.3.0.
 - PyArrow upper bound — pinned to `<26` to match what CI exercises
   (25.0.1). Pin and re-test when bumping.
+
+### Things closed in v0.4.0
+
+- **Incremental sync** — `SyncStateStore` Protocol with
+  `FileSyncStateStore` (default) and `RedisSyncStateStore` (for
+  service) backends. `WorksheetExporter.export(incremental=True,
+  state_store=...)` and `JobSubmission(incremental=True,
+  state_store_kind="file|redis")` both wired. Watermark only moves
+  forward (out-of-order arrival safety). `force_full=True` ignores
+  the watermark for a clean re-sync.
 
 ---
 

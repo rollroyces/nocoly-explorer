@@ -67,6 +67,11 @@ class ExportResult:
     partitions: Dict[str, int]
     output_dir: Path
     bytes_written: int = 0
+    # Max value of any tracked update column (default "_updatedAt") seen
+    # across the rows ingested during this export. None if no rows carried
+    # the column or the export produced zero rows. Used by incremental-
+    # sync callers to update the watermark.
+    max_updated_at: Optional[str] = None
 
 
 _UNPARTITIONED_KEY = "__unpartitioned__"
@@ -101,6 +106,7 @@ class StreamingExporter:
         self._buffers: Dict[str, RowGroupBuffer] = {}
         self._rows_seen = 0
         self._bytes_written = 0
+        self._max_updated_at: Optional[str] = None
 
     def export(
         self,
@@ -127,6 +133,7 @@ class StreamingExporter:
             partitions={k: w.rows_written for k, w in self._writers.items()},
             output_dir=self.output_dir,
             bytes_written=self._bytes_written,
+            max_updated_at=self._max_updated_at,
         )
 
     async def stream_async(
@@ -180,11 +187,21 @@ class StreamingExporter:
             partitions={k: w.rows_written for k, w in self._writers.items()},
             output_dir=self.output_dir,
             bytes_written=self._bytes_written,
+            max_updated_at=self._max_updated_at,
         )
 
     def _ingest(self, rows: Sequence[Dict[str, Any]]) -> None:
         if not rows:
             return
+        # Step 0: track max(_updatedAt) for incremental-sync callers.
+        # ISO 8601 strings sort lexicographically, so a plain > works.
+        for row in rows:
+            v = row.get("_updatedAt")
+            if v is None:
+                continue
+            s = str(v)
+            if self._max_updated_at is None or s > self._max_updated_at:
+                self._max_updated_at = s
         # Step 1: schema manager validates/infers schema.
         self.schema_manager.ingest_page(rows)
         # Step 2: bucket rows by partition key.
