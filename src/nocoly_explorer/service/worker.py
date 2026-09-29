@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from ..async_client import AsyncWorksheetClient
 from ..exceptions import JobCancelled
@@ -16,6 +16,13 @@ from ..streaming import (
     StreamingExporter,
 )
 from ..streaming.exporter import _NoopClientAdapter
+from ..sync_state import (
+    FileSyncStateStore,
+    RedisSyncStateStore,
+    SyncWatermark,
+    max_watermark,
+    _now_iso,
+)
 from .state import JobState
 
 _LOGGER = logging.getLogger("nocoly_explorer.service.worker")
@@ -46,11 +53,43 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
     max_pages = params.get("max_pages", 1000)
     concurrency = params.get("concurrency", 8)
 
+    # v0.4.0: incremental sync support.
+    incremental = bool(params.get("incremental", False))
+    force_full = bool(params.get("force_full", False))
+    updated_at_column = params.get("updated_at_column", "_updatedAt")
+    workspace = params.get("workspace", "default")
+
     rows_written = 0
     artifact_path: str = ""
 
     async def _is_cancelled() -> bool:
         return await state.is_cancel_requested(job_id)
+
+    # Build the sync-state store + (if incremental) the since-filter.
+    sync_store = None
+    sync_filter: Optional[Dict[str, Any]] = None
+    if incremental:
+        store_kind = params.get("state_store_kind", "file")
+        if store_kind == "redis":
+            sync_store = RedisSyncStateStore(redis, workspace=workspace)
+        else:
+            sync_store = FileSyncStateStore(workspace=workspace)
+        if force_full:
+            sync_store.clear(worksheet_id)
+        existing = sync_store.get(worksheet_id)
+        if existing.watermark and not force_full:
+            sync_filter = {
+                "type": "group",
+                "logic": "AND",
+                "filters": [
+                    {
+                        "type": "condition",
+                        "field": updated_at_column,
+                        "operator": "GT",
+                        "value": existing.watermark,
+                    }
+                ],
+            }
 
     try:
         if sink in ("parquet_local", "parquet_s3"):
@@ -98,6 +137,7 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
                         aclient,
                         page_size=page_size,
                         max_pages=max_pages,
+                        filter_criteria=sync_filter,
                         cancel_check=_is_cancelled,
                     )
                 except JobCancelled:
@@ -114,6 +154,25 @@ async def run_job(redis: Any, job_id: str, params: Dict[str, Any]) -> Dict[str, 
                 await state.set_result(
                     job_id, artifact_path, rows_written=rows_written
                 )
+
+                # v0.4.0: persist the new watermark if incremental sync was requested.
+                # The exporter tracks max(_updatedAt) on ExportResult.
+                if sync_store is not None:
+                    new_watermark = result.max_updated_at
+                    final_watermark = new_watermark
+                    if (
+                        existing.watermark is not None
+                        and new_watermark is not None
+                        and existing.watermark > new_watermark
+                    ):
+                        # Out-of-order arrival: don't move watermark backward.
+                        final_watermark = existing.watermark
+                    sync_store.set(SyncWatermark(
+                        worksheet_id=worksheet_id,
+                        watermark=final_watermark,
+                        last_run_at=_now_iso(),
+                        rows_synced=rows_written,
+                    ))
                 return {
                     "status": "succeeded",
                     "rows_written": rows_written,
