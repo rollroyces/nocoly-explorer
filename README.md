@@ -8,7 +8,7 @@
 
 <div align="center">
 
-[![Tests](https://img.shields.io/badge/tests-173%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-223%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue)]()
 [![Release](https://img.shields.io/badge/release-v0.2.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.2.0)
 [![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.2.0/nocoly_explorer-0.2.0-py3-none-any.whl)
@@ -17,7 +17,7 @@
 </div>
 
 A modular Python client for downloading [Nocoly](https://www.nocoly.com) worksheet
-data — from one-shot scripts to enterprise data pipelines. Three layers stacked on
+data — from one-shot scripts to enterprise data pipelines. Four layers stacked on
 the same core client:
 
 - 🟢 **`WorksheetExporter`** — fetch into pandas / PySpark / CSV / JSON / files (v0.1.1)
@@ -25,6 +25,8 @@ the same core client:
   partitioned Parquet, hold memory bounded by row-group size (v0.2.0)
 - 🟣 **`create_app` + `run_job`** — FastAPI service + Arq worker for orchestration
   from n8n / Airflow / schedulers (v0.2.0)
+- 🟠 **`get_worksheet_schema`** — discover column names + data types directly from
+  Nocoly, with sample-based inference fallback (v0.2.0)
 
 ---
 
@@ -62,11 +64,12 @@ All four panels are real outputs from the demo at `scripts/demo.py` — not stag
 
 </div>
 
-One HTTP request → enqueued in Redis → Arq worker fetches async via
-`AsyncWorksheetClient` → writes sync via `StreamingExporter` → Parquet on disk.
-Status and progress flow back to Redis so the API stays responsive. A `cancel`
-request flips a flag the worker checks between pages — cooperative cancellation,
-no orphaned half-written files.
+One HTTP request → enqueued in Redis → Arq worker streams pages via
+`AsyncWorksheetClient` → writes through `StreamingExporter.stream_async` as pages
+arrive → Parquet on disk. Memory stays bounded by `row_group_bytes` rather than
+growing with row count. Status and progress flow back to Redis so the API stays
+responsive. A `cancel` request flips a flag the worker checks between pages —
+cooperative cancellation, no orphaned half-written files.
 
 ---
 
@@ -163,9 +166,89 @@ df = WorksheetExporter().export(
 WorksheetExporter
  ├── EnvironmentDetector       (Databricks vs. local)
  ├── CredentialProvider        (Databricks secrets vs. env vs. config)
- ├── WorksheetFetcher          (retries, Retry-After, MAX_PAGE_SIZE=1000)
+ ├── WorksheetClient           (retries, Retry-After, MAX_PAGE_SIZE=1000)
+ │    └── get_worksheet_schema (column metadata + inference fallback)
  └── OutputFormatter           (dataframe / spark / json / csv / file)
 ```
+
+---
+
+## Discovering the worksheet schema (v0.2.0)
+
+Read a worksheet's column names and data types directly, with a tolerant response
+parser and a graceful fallback to sample-based inference. Useful for pre-flight
+checks, schema-aware validation, or round-tripping through JSON for reuse on the
+next export.
+
+```python
+from nocoly_explorer.client import WorksheetClient
+from nocoly_explorer.auth import CredentialPair
+
+client = WorksheetClient(
+    host="https://bpm-uat.chinachemgroup.com",
+    worksheet_id="ws_123",
+    credentials=CredentialPair(
+        app_key=...,
+        app_sign=...,
+    ),
+)
+
+schema = client.get_worksheet_schema()
+print(schema.source)               # "api" or "inferred"
+for col in schema.columns:
+    print(f"  {col.name}: {col.type}  nullable={col.nullable}")
+
+# Round-trip to JSON for reuse
+with open("ws_123.schema.json", "w") as f:
+    f.write(schema.to_json())
+```
+
+What you get back (`NocolyWorksheetSchema`):
+
+| Field       | Type                                       | Notes                                      |
+|-------------|--------------------------------------------|--------------------------------------------|
+| `worksheet_id` | `str`                                    | source worksheet id                        |
+| `columns`   | `list[NocolyColumnInfo]`                   | column metadata                            |
+| `source`    | `Literal["api", "inferred"]`               | which path produced the result             |
+
+Each `NocolyColumnInfo` carries `name`, `type` (Nocoly-style string), `nullable`,
+and optional `description`. The schema is convertible to a `pyarrow.Schema` via
+`.to_pyarrow()`.
+
+### How the discovery works
+
+1. The client tries `POST /api/v3/app/worksheets/{id}/columns` (or
+   `metadata_endpoint=` if you override it). A DEBUG log line shows the URL and
+   HTTP status on every attempt.
+2. On 200 with a recognized response shape → returns `source="api"`.
+3. On 404, network error, or unrecognized shape → fetches `sample_size` rows
+   (default 1) and returns `source="inferred"` using `infer_schema_from_rows()`
+   with type widening (int → float → decimal → string, date → timestamp).
+
+### Caveat on the default endpoint
+
+The default endpoint is an **educated guess** — the only Nocoly endpoint
+documented in this repo is `POST /api/v3/app/worksheets/{id}/rows/list`. The
+metadata path may not exist on your Nocoly deployment. Three ways to handle this:
+
+- Pass an explicit `metadata_endpoint="/the/real/endpoint"` once you know it.
+- Set `NOCOLY_SCHEMA_API_DISABLED=1` (or any truthy value) to skip the API
+  attempt entirely and go straight to inference.
+- Pass `try_api=False` on the call for the same effect.
+
+### Standalone inference
+
+For tests, dry-runs, or when you already have row dicts in hand:
+
+```python
+from nocoly_explorer import infer_schema_from_rows
+
+rows = client.fetch_rows(page_size=10, max_pages=1)
+schema = infer_schema_from_rows(rows, sample_size=256, worksheet_id="ws_123")
+```
+
+Type widening makes heterogeneous columns safe — a column that mixes `int` and
+`float` values resolves to `number`, not `integer`.
 
 ---
 
@@ -235,8 +318,10 @@ print(result)
 ```
 
 `StreamingExporter.export()` is synchronous and expects a sync `WorksheetClientLike`.
-To use it with `AsyncWorksheetClient`, fetch all rows first then hand them to a
-sync adapter (this is exactly what the service worker's `run_job` does):
+To use it directly with `AsyncWorksheetClient`, the streaming exporter exposes
+`stream_async()` which consumes pages from the async client and writes each page
+through the row-group buffer as soon as it arrives. This is what the service
+worker's `run_job` uses internally — no `_SyncRowsClient` adapter needed:
 
 ```python
 import asyncio
@@ -244,31 +329,32 @@ from nocoly_explorer import (
     AsyncWorksheetClient, StreamingExporter, StreamingExportConfig,
     ParquetExportOptions, PartitionSpec,
 )
+from nocoly_explorer.streaming.exporter import _NoopClientAdapter
 
 
-class _SyncRowsClient:
-    """Tiny adapter that hands a pre-fetched list to the sync exporter."""
-    def __init__(self, rows):
-        self._rows = list(rows)
-    def fetch_rows(self, **_kwargs):
-        return self._rows
-
-
-async def export_async(host, token, worksheet_id, output_dir):
+async def export_streaming(host, token, worksheet_id, output_dir):
     async with AsyncWorksheetClient(
         base_url=host, auth_token=token, worksheet_id=worksheet_id,
-    ) as client:
-        all_rows = await client.fetch_all_async(page_size=200)
-    return StreamingExporter(
-        client=_SyncRowsClient(all_rows),
-        config=StreamingExportConfig(
-            output_dir=output_dir,
-            worksheet_id=worksheet_id,
-            options=ParquetExportOptions(),
-            partition=PartitionSpec(column="created_date", granularity="day"),
-        ),
-    ).export()
+    ) as aclient:
+        exporter = StreamingExporter(
+            client=_NoopClientAdapter(),     # stream_async ignores this
+            config=StreamingExportConfig(
+                output_dir=output_dir,
+                worksheet_id=worksheet_id,
+                options=ParquetExportOptions(),
+                partition=PartitionSpec(column="created_date", granularity="day"),
+            ),
+        )
+        result = await exporter.stream_async(
+            aclient,
+            page_size=200,
+            cancel_check=lambda: my_cancel_flag(),  # optional
+        )
+    return result
 ```
+
+Memory is bounded by `row_group_bytes × partitions` plus the in-flight pages
+(`concurrency × page_size` rows at most) — not by the full row count.
 
 What you get:
 - **One Parquet file per partition** (Hive-style: `output_dir/created_date=YYYY-MM-DD/data_0.parquet`).
@@ -408,6 +494,7 @@ unless you set `NOCOLY_DETECT_FORCE=local`.
 | `NOCOLY_DETECT_FORCE`     | `local` / `databricks` — override environment detection  |
 | `NOCOLY_SERVICE_API_KEY`  | Bearer token required on every service endpoint          |
 | `NOCOLY_REDIS_URL`        | Redis URL for service state (default `redis://localhost:6379/0`) |
+| `NOCOLY_SCHEMA_API_DISABLED` | `1`/`true`/`yes`/`on` — skip the metadata endpoint in `get_worksheet_schema`, go straight to inference |
 
 ---
 
@@ -419,7 +506,7 @@ cd nocoly-explorer
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dataframe,streaming,async,service,test]"
 
-# Run the full test suite (173 tests)
+# Run the full test suite (223 tests)
 pytest
 
 # Run only streaming tests
@@ -427,6 +514,9 @@ pytest tests/test_streaming_exporter.py -v
 
 # Run only service tests
 pytest tests/test_service_app.py -v
+
+# Run only schema tests
+pytest tests/test_schema.py -v
 
 # Run the demo
 ./scripts/demo.py
@@ -438,6 +528,7 @@ pytest tests/test_service_app.py -v
 src/nocoly_explorer/
  ├── async_client.py          # Layer 2 — AsyncWorksheetClient, RetryPolicy, TokenBucket
  ├── auth.py                  # CredentialProvider strategies
+ ├── backoff.py               # Shared compute_backoff + parse_retry_after
  ├── client.py                # Layer 1 — sync client with retry / Retry-After
  ├── config.py                # User config file loading
  ├── detector.py              # Databricks vs. local detection
@@ -445,15 +536,16 @@ src/nocoly_explorer/
  ├── exporter.py              # Layer 1 — WorksheetExporter orchestrator
  ├── filters.py               # NocolyFilter DSL
  ├── output.py                # Layer 1 — output formatters
+ ├── schema.py                # NocolyColumnInfo, NocolyWorksheetSchema, infer_schema_from_rows
  ├── service/                 # Layer 3 — FastAPI service
  │   ├── __init__.py          #   create_app
  │   ├── auth.py              #   Bearer-token validator
  │   ├── schemas.py           #   Pydantic models
  │   ├── state.py             #   JobState (Redis)
- │   └── worker.py            #   run_job (Arq)
+ │   └── worker.py            #   run_job (Arq) — uses StreamingExporter.stream_async
  └── streaming/               # Layer 2 — StreamingExporter
      ├── buffer.py            #   RowGroupBuffer (target-bytes flushing)
-     ├── exporter.py          #   StreamingExporter + StreamingExportConfig
+     ├── exporter.py          #   StreamingExporter + StreamingExportConfig + stream_async
      ├── options.py           #   ParquetExportOptions, PartitionSpec
      ├── partitions.py        #   PartitionRouter + cardinality guard
      ├── schema.py            #   ParquetSchemaManager + drift policy
@@ -471,6 +563,11 @@ own integration checklist:
   validated against a local mock that matches the documented pagination shape.
   Field names, auth headers, and error responses on the real server have not
   been exercised here.
+- **Metadata endpoint for `get_worksheet_schema`.** The default endpoint
+  (`/api/v3/app/worksheets/{id}/columns`) is an educated guess; the Nocoly
+  metadata path has not been verified against a real server. The sample-based
+  inference fallback works regardless, but `source="api"` should be confirmed
+  against your deployment before relying on it.
 - **S3 sink.** `parquet_s3` is declared in the schema but not wired in the worker.
   Add your own `s3fs` / `pyarrow.fs.S3FileSystem` integration when you need it.
 - **Incremental sync.** Spec §6 (the Phase 4 `SyncStateStore` + `updated_at`
