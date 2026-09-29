@@ -8,7 +8,7 @@
 
 <div align="center">
 
-[![Tests](https://img.shields.io/badge/tests-223%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-245%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue)]()
 [![Release](https://img.shields.io/badge/release-v0.2.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.2.0)
 [![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.2.0/nocoly_explorer-0.2.0-py3-none-any.whl)
@@ -506,7 +506,7 @@ cd nocoly-explorer
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dataframe,streaming,async,service,test]"
 
-# Run the full test suite (223 tests)
+# Run the full test suite (245 tests)
 pytest
 
 # Run only streaming tests
@@ -521,6 +521,24 @@ pytest tests/test_schema.py -v
 # Run the demo
 ./scripts/demo.py
 ```
+
+### Examples
+
+Self-contained runnable scripts under [`examples/`](examples/) demonstrate each
+major workflow. Each script has a top-of-file docstring (purpose, setup, env
+vars, run command) and reads credentials from environment variables only.
+
+| # | File | What it does |
+|---|---|---|
+| 01 | [`examples/01_basic_dataframe.py`](examples/01_basic_dataframe.py) | Layer 1 — fetch into a pandas DataFrame with a filter |
+| 02 | [`examples/02_streaming_parquet.py`](examples/02_streaming_parquet.py) | Layer 2 — stream pages into partitioned Parquet |
+| 03 | [`examples/03_schema_discovery.py`](examples/03_schema_discovery.py) | Discover column names + data types via `get_worksheet_schema` |
+| 04 | [`examples/04_s3_export.py`](examples/04_s3_export.py) | Stream directly into an S3 bucket via `pyarrow.fs.S3FileSystem` |
+| 05 | [`examples/05_filters.py`](examples/05_filters.py) | Seven `NocolyFilter` DSL recipes |
+| 06 | [`examples/06_service_submit.py`](examples/06_service_submit.py) | Submit an export job to the FastAPI service via httpx |
+
+See [`examples/README.md`](examples/README.md) for the full environment-variable
+reference and a quick-start for the service example.
 
 ### Project layout
 
@@ -568,13 +586,12 @@ own integration checklist:
   metadata path has not been verified against a real server. The sample-based
   inference fallback works regardless, but `source="api"` should be confirmed
   against your deployment before relying on it.
-- **S3 sink.** `parquet_s3` is declared in the schema but not wired in the worker.
-  Add your own `s3fs` / `pyarrow.fs.S3FileSystem` integration when you need it.
+- **Crash-restart safety on non-local filesystems.** Local exports use a
+  `.tmp` + rename pattern; S3 and other non-local destinations fall back to
+  direct writes because atomic rename isn't portable. A future commit could
+  implement upload-then-promote via `pyarrow.fs` copy semantics if needed.
 - **Incremental sync.** Spec §6 (the Phase 4 `SyncStateStore` + `updated_at`
   filtering) is not implemented. v0.2.1 will address it.
-- **Crash-restart safety for partial Parquet writes.** If the worker is killed
-  mid-write, the partition's `.parquet` file may be left half-formed. A `.tmp`
-  + rename pattern would fix this — see `ParquetPartitionWriter` for the seam.
 - **Multi-row-group per partition at scale.** Tested with single-digit row groups
   per partition. Databricks recommendations (128 MB row groups) haven't been
   load-tested at hundreds of MB per partition.
