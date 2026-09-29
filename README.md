@@ -73,7 +73,7 @@ async def main():
         print(f"wrote {result.rows_written} rows to {result.partitions}")
 
 asyncio.run(main())
-```bash
+```
 
 See [`examples/`](examples/) for six runnable scripts covering each layer, or jump to a
 specific section below.
@@ -272,7 +272,7 @@ for col in schema.columns:
 # Round-trip to JSON for reuse
 with open("ws_123.schema.json", "w") as f:
     f.write(schema.to_json())
-```bash
+```
 
 What you get back (`NocolyWorksheetSchema`):
 
@@ -364,7 +364,7 @@ all_rows = exporter.export(
     state_store=store,
     force_full=True,
 )
-```python
+```
 
 For the FastAPI service, pass `state_store_kind="redis"` in
 `JobSubmission` and the worker will use a `RedisSyncStateStore`
@@ -449,7 +449,7 @@ result = StreamingExporter(
 print(result)
 # ExportResult(rows_written=487, partitions_written=2,
 #               files_written=2, output_dir='/mnt/datalake/nocoly/ws_123')
-```python
+```
 
 `StreamingExporter.export()` is synchronous and expects a sync `WorksheetClientLike`.
 To use it directly with `AsyncWorksheetClient`, the streaming exporter exposes
@@ -515,7 +515,7 @@ StreamingExporter(
     client=sync_client,                  # WorksheetClientLike Protocol
     config=StreamingExportConfig(output_dir="...", worksheet_id="...", options=...),
 ).export()
-```bash
+```
 
 The exporter accepts any object with `.fetch_rows()` (the `WorksheetClientLike`
 Protocol) — sync or async, real or fake.
@@ -608,7 +608,7 @@ The Nocoly API auth uses an `env_prefix` strategy. The default prefix is
 ```bash
 export NOCOLY_APP_KEY="..."
 export NOCOLY_APP_SIGN="..."
-```text
+```
 
 Or, for multiple environments, use a prefix:
 
@@ -702,7 +702,7 @@ src/nocoly_explorer/
      ├── partitions.py        #   PartitionRouter + cardinality guard
      ├── schema.py            #   ParquetSchemaManager + drift policy
      └── writer.py            #   ParquetPartitionWriter (append mode)
-```python
+```
 
 ---
 
