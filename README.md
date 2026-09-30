@@ -930,15 +930,83 @@ you see a symbol you don't recognize, check here first.
 ## Error codes
 
 Every exception in `nocoly_explorer.exceptions` carries a stable string
-`code` (e.g. `NOCOLY_021`) that you can match on without relying on the
-exception class. Codes are part of the public contract — **they don't
-change once shipped**. New failure modes get new codes; old codes stay
-even if a class is renamed or refactored.
+`code` (e.g. `"job_not_found"`) so callers can match on it without
+relying on the exception class. Codes are part of the public
+contract — **they don't change once shipped**. New failure modes get
+new codes; old codes stay even if a class is renamed.
 
-The table below is the complete list as of v0.4.1:
+The convention is straightforward: the code is the exception class
+name in `snake_case`, lowercased. `JobNotFound` becomes
+`"job_not_found"`. If you're catching the class, you can compute
+the code from the name with a single conversion.
 
 | Code | Exception | When it's raised |
 |------|-----------|------------------|
+| `nocoly_error` | `NocolyError` | Base class — only raised if you call it directly |
+| `missing_credentials` | `MissingCredentialsError` | `app_key` / `app_sign` couldn't be resolved from env, config, or Databricks secrets |
+| `output_validation` | `OutputValidationError` | A parameter in the output spec is internally inconsistent (e.g. `partition_granularity` set without `partition_by`) |
+| `environment_detection` | `EnvironmentDetectionError` | Runtime-mode detection failed and `NOCOLY_DETECT_FORCE` is invalid |
+| `schema_drift` | `SchemaDriftError` | An incoming page's columns don't match the inferred schema and the drift policy is `error` |
+| `cardinality_exceeded` | `CardinalityExceededError` | A partition column produced more distinct values than `max_partition_cardinality` |
+| `async_client_error` | `AsyncClientError` | Base class for async pagination failures — only raised if you call it directly |
+| `pagination_limit_exceeded` | `PaginationLimitExceeded` | Server never returned `has_more=False` within `max_pages`; you may be missing data |
+| `service_error` | `ServiceError` | Base class for service-layer failures — only raised if you call it directly |
+| `job_not_found` | `JobNotFound` | The `job_id` you queried does not exist in Redis |
+| `job_not_ready` | `JobNotReady` | `GET /jobs/{id}/result` was called before the job finished |
+| `job_cancelled` | `JobCancelled` | A cooperative `cancel_check` returned `True` mid-pagination |
+
+### Recommended catch pattern
+
+Prefer catching the narrowest class that matches what your code can
+handle. Fall back to `NocolyError` only when you don't care which
+specific thing went wrong.
+
+```python
+from nocoly_explorer import NocolyError, JobCancelled, PaginationLimitExceeded
+
+try:
+    rows = await exporter.stream_async(client, page_size=200, cancel_check=...)
+except JobCancelled:
+    # User clicked cancel - we know the watermark didn't move.
+    notify("Export cancelled")
+except PaginationLimitExceeded:
+    # Server never said "no more pages" - investigate before re-running.
+    log.warning("Hit max_pages without is_more=False")
+    raise
+except NocolyError as exc:
+    # Catch-all for anything else nocoly-explorer-specific.
+    log.error("nocoly-explorer error %s: %s", exc.code, exc)
+    raise
+```
+
+The `code` attribute is a plain string, so `if exc.code ==
+"job_not_found":` works everywhere. The string is the class name in
+`snake_case`, so you can also compute it dynamically:
+
+```python
+code = "".join(c.lower() if c.isalnum() else "_" for c in exc.__class__.__name__).rstrip("_")
+```
+
+### Service-layer HTTP status codes
+
+When calling the FastAPI service (POST `/jobs`, GET `/jobs/{id}`, etc.),
+the response includes both an HTTP status code and a `code` in the error
+body (where applicable). HTTP status codes are stable and follow
+standard REST conventions:
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success |
+| `401` | Missing or wrong `Authorization: Bearer` header (when `NOCOLY_SERVICE_API_KEY` is set on the server) |
+| `404` | `job_id` not found |
+| `409` | `/jobs/{id}/result` called before the job finished |
+| `422` | Pydantic validation failed (missing required field, wrong type, etc.) |
+| `503` | `/readyz` checked while Redis is unreachable |
+
+The `code` field in error responses is the same string as the `code`
+attribute on the raised exception. If you see a `code` you don't
+recognize, look it up in the table above.
+---|-----------|------------------|
 | `NOCOLY_000` | `NocolyError` | Base class — only raised if you call it directly |
 | `NOCOLY_001` | `MissingCredentialsError` | `app_key` / `app_sign` couldn't be resolved from env, config, or Databricks secrets |
 | `NOCOLY_002` | `OutputValidationError` | A parameter in the output spec is internally inconsistent (e.g. `partition_granularity` set without `partition_by`) |

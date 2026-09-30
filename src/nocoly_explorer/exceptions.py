@@ -1,9 +1,10 @@
 """Custom exception hierarchy for the Nocoly explorer package.
 
-Every leaf exception carries a stable string ``code`` (e.g. ``"NOCOLY_021"``)
-so callers can match on it without relying on the exception class. Codes are
-documented in the README under "Error codes" and **never change** once
-shipped - new codes are added for new failure modes instead.
+Every exception carries a stable string ``code`` (e.g. ``"job_not_found"``)
+so callers can match on it without relying on the exception class. Codes
+mirror the exception class name in snake_case and are documented in the
+README under "Error codes". **Codes never change once shipped** - new
+failure modes get new codes; old codes stay even if a class is renamed.
 """
 
 from __future__ import annotations
@@ -12,67 +13,67 @@ from __future__ import annotations
 class NocolyError(Exception):
     """Base class for all custom errors. Carries no code itself; subclasses do."""
 
-    code: str = "NOCOLY_000"
+    code: str = "nocoly_error"
 
 
 class MissingCredentialsError(NocolyError):
     """Raised when app_key/app_sign cannot be resolved."""
 
-    code = "NOCOLY_001"
+    code = "missing_credentials"
 
 
 class OutputValidationError(NocolyError):
     """Raised when output parameters are inconsistent."""
 
-    code = "NOCOLY_002"
+    code = "output_validation"
 
 
 class EnvironmentDetectionError(NocolyError):
     """Raised when the runtime mode cannot be determined."""
 
-    code = "NOCOLY_003"
+    code = "environment_detection"
 
 
 class SchemaDriftError(NocolyError):
     """Raised when the API response schema diverges from the declared one."""
 
-    code = "NOCOLY_004"
+    code = "schema_drift"
 
 
 class CardinalityExceededError(NocolyError):
     """Raised when a partition column exceeds the configured max distinct values."""
 
-    code = "NOCOLY_005"
+    code = "cardinality_exceeded"
 
 
 class AsyncClientError(NocolyError):
     """Base exception for async pagination failures."""
 
-    code = "NOCOLY_010"
+    code = "async_client_error"
 
 
 class PaginationLimitExceeded(AsyncClientError):
     """Raised when pagination exceeds the configured max_pages."""
 
-    code = "NOCOLY_011"
+    code = "pagination_limit_exceeded"
 
 
 class ServiceError(NocolyError):
     """Base exception for service-layer failures."""
 
-    code = "NOCOLY_020"
+    code = "service_error"
 
 
 class JobNotFound(ServiceError):
     """Raised when a job_id does not exist in Redis."""
 
-    code = "NOCOLY_021"
+    code = "job_not_found"
 
 
 class JobNotReady(ServiceError):
     """Raised when /result is fetched before job completion."""
 
-    code = "NOCOLY_022"
+    code = "job_not_ready"
 
 
 class JobCancelled(NocolyError):
@@ -83,4 +84,4 @@ class JobCancelled(NocolyError):
     general handling, or ``JobCancelled`` for cancellation-specific paths.
     """
 
-    code = "NOCOLY_030"
+    code = "job_cancelled"
