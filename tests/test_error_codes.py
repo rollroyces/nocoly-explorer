@@ -22,18 +22,18 @@ from nocoly_explorer.exceptions import (
 
 # (class, code) pairs that should be stable across releases.
 EXPECTED_CODES = {
-    NocolyError: "NOCOLY_000",
-    MissingCredentialsError: "NOCOLY_001",
-    OutputValidationError: "NOCOLY_002",
-    EnvironmentDetectionError: "NOCOLY_003",
-    SchemaDriftError: "NOCOLY_004",
-    CardinalityExceededError: "NOCOLY_005",
-    AsyncClientError: "NOCOLY_010",
-    PaginationLimitExceeded: "NOCOLY_011",
-    ServiceError: "NOCOLY_020",
-    JobNotFound: "NOCOLY_021",
-    JobNotReady: "NOCOLY_022",
-    JobCancelled: "NOCOLY_030",
+    NocolyError: "nocoly_error",
+    MissingCredentialsError: "missing_credentials",
+    OutputValidationError: "output_validation",
+    EnvironmentDetectionError: "environment_detection",
+    SchemaDriftError: "schema_drift",
+    CardinalityExceededError: "cardinality_exceeded",
+    AsyncClientError: "async_client_error",
+    PaginationLimitExceeded: "pagination_limit_exceeded",
+    ServiceError: "service_error",
+    JobNotFound: "job_not_found",
+    JobNotReady: "job_not_ready",
+    JobCancelled: "job_cancelled",
 }
 
 
@@ -77,7 +77,7 @@ class TestInheritance:
     def test_code_round_trip_through_raise(self):
         with pytest.raises(MissingCredentialsError) as exc:
             raise MissingCredentialsError("missing app_key")
-        assert exc.value.code == "NOCOLY_001"
+        assert exc.value.code == "missing_credentials"
         assert "missing app_key" in str(exc.value)
 
 
@@ -88,9 +88,9 @@ class TestStableCodes:
     """
 
     @pytest.mark.parametrize("code", [
-        "NOCOLY_001", "NOCOLY_002", "NOCOLY_003", "NOCOLY_004",
-        "NOCOLY_005", "NOCOLY_010", "NOCOLY_011", "NOCOLY_020",
-        "NOCOLY_021", "NOCOLY_022", "NOCOLY_030",
+        "missing_credentials", "output_validation", "environment_detection", "schema_drift",
+        "cardinality_exceeded", "async_client_error", "pagination_limit_exceeded", "service_error",
+        "job_not_found", "job_not_ready", "job_cancelled",
     ])
     def test_code_still_assigned(self, code):
         # Reverse-lookup: every documented code maps to a class.
