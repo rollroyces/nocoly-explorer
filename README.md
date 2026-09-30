@@ -8,10 +8,10 @@
 
 <div align="center">
 
-[![Release](https://img.shields.io/badge/release-v0.4.0-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.4.0)
-[![Tests](https://img.shields.io/badge/tests-263%20passed-brightgreen)]()
+[![Release](https://img.shields.io/badge/release-v0.4.1-blue)](https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.4.1)
+[![Tests](https://img.shields.io/badge/tests-301%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue)]()
-[![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.4.0/nocoly_explorer-0.4.0-py3-none-any.whl)
+[![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.4.1/nocoly_explorer-0.4.1-py3-none-any.whl)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache%202.0-lightgrey)]()
 
 </div>
@@ -132,6 +132,7 @@ can be upgraded later without rewriting your code.
 - [Project layout](#project-layout)
 - [Honest gaps](#honest-gaps)
 - [Glossary](#glossary)
+- [Error codes](#error-codes)
 - [License](#license)
 
 ---
@@ -921,3 +922,83 @@ you see a symbol you don't recognize, check here first.
 - **`WorksheetClientLike`** — Protocol that the streaming exporter
   accepts in its constructor; anything with a `fetch_rows(...)`
   method qualifies.
+- **Error codes** — see [Error codes](#error-codes) for the
+  complete list of `NOCOLY_xxx` strings and what each one means.
+
+---
+
+## Error codes
+
+Every exception in `nocoly_explorer.exceptions` carries a stable string
+`code` (e.g. `NOCOLY_021`) that you can match on without relying on the
+exception class. Codes are part of the public contract — **they don't
+change once shipped**. New failure modes get new codes; old codes stay
+even if a class is renamed or refactored.
+
+The table below is the complete list as of v0.4.1:
+
+| Code | Exception | When it's raised |
+|------|-----------|------------------|
+| `NOCOLY_000` | `NocolyError` | Base class — only raised if you call it directly |
+| `NOCOLY_001` | `MissingCredentialsError` | `app_key` / `app_sign` couldn't be resolved from env, config, or Databricks secrets |
+| `NOCOLY_002` | `OutputValidationError` | A parameter in the output spec is internally inconsistent (e.g. `partition_granularity` set without `partition_by`) |
+| `NOCOLY_003` | `EnvironmentDetectionError` | Runtime-mode detection failed and `NOCOLY_DETECT_FORCE` is invalid |
+| `NOCOLY_004` | `SchemaDriftError` | An incoming page's columns don't match the inferred schema and the drift policy is `error` |
+| `NOCOLY_005` | `CardinalityExceededError` | A partition column produced more distinct values than `max_partition_cardinality` |
+| `NOCOLY_010` | `AsyncClientError` | Base class for async pagination failures — only raised if you call it directly |
+| `NOCOLY_011` | `PaginationLimitExceeded` | Server never returned `has_more=False` within `max_pages`; you may be missing data |
+| `NOCOLY_020` | `ServiceError` | Base class for service-layer failures — only raised if you call it directly |
+| `NOCOLY_021` | `JobNotFound` | The `job_id` you queried does not exist in Redis |
+| `NOCOLY_022` | `JobNotReady` | `GET /jobs/{id}/result` was called before the job finished |
+| `NOCOLY_030` | `JobCancelled` | A cooperative `cancel_check` returned `True` mid-pagination |
+
+### Recommended catch pattern
+
+Prefer catching the narrowest class that matches what your code can
+handle. Fall back to `NocolyError` only when you don't care which
+specific thing went wrong.
+
+```python
+from nocoly_explorer import NocolyError, JobCancelled, PaginationLimitExceeded
+from nocoly_explorer.exceptions import NOCOLY_011, NOCOLY_030
+
+try:
+    rows = await exporter.stream_async(client, page_size=200, cancel_check=...)
+except JobCancelled:
+    # User clicked cancel - we know the watermark didn't move.
+    notify("Export cancelled")
+except PaginationLimitExceeded as exc:
+    # Server never said "no more pages" - investigate before re-running.
+    if exc.code == NOCOLY_011:
+        log.warning("Hit max_pages=%d without is_more=False; raising.", exc.max_pages)
+    raise
+except NocolyError as exc:
+    # Catch-all for anything else nocoly-explorer-specific.
+    log.error("nocoly-explorer error %s: %s", exc.code, exc)
+    raise
+```
+
+The `code` attribute is a plain string (`str`), so `if exc.code ==
+"NOCOLY_021":` works everywhere. The constants in
+`nocoly_explorer.exceptions` (`NOCOLY_001`, etc.) exist for
+discoverability — both styles are supported.
+
+### Service-layer HTTP status codes
+
+When calling the FastAPI service (POST `/jobs`, GET `/jobs/{id}`, etc.),
+the response includes both an HTTP status code and a `code` in the error
+body (where applicable). HTTP status codes are stable and follow
+standard REST conventions:
+
+| Status | Meaning |
+|--------|---------|
+| `200` | Success |
+| `401` | Missing or wrong `Authorization: Bearer` header (when `NOCOLY_SERVICE_API_KEY` is set on the server) |
+| `404` | `job_id` not found |
+| `409` | `/jobs/{id}/result` called before the job finished |
+| `422` | Pydantic validation failed (missing required field, wrong type, etc.) |
+| `503` | `/readyz` checked while Redis is unreachable |
+
+The `code` field in error responses is the same string as the `code`
+attribute on the raised exception. If you see a `code` you don't
+recognize, look it up in the table above.
