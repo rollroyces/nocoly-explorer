@@ -156,11 +156,31 @@ class AsyncWorksheetClient:
         self._owns_session = session is None
         self._token_bucket = TokenBucket(requests_per_second, burst=float(concurrency))
 
+    def _hap_headers(self) -> Dict[str, str]:
+        """Build the HAP auth headers from ``auth_token`` ("app_key:app_sign").
+
+        The sync ``WorksheetClient`` sends the same two headers; this client
+        used to send ``Authorization: Bearer <auth_token>`` instead, which
+        produced a malformed Bearer value (colons) and the wrong auth
+        scheme for Nocoly.
+        """
+        token = self.auth_token
+        if ":" in token:
+            app_key, _, app_sign = token.partition(":")
+        else:
+            # Single-token form: send as both header keys, which works
+            # for self-hosted Nocoly instances that only require one of
+            # the two.
+            app_key = app_sign = token
+        return {
+            "HAP-AppKey": app_key,
+            "HAP-Sign": app_sign,
+            "Content-Type": "application/json",
+        }
+
     async def __aenter__(self) -> "AsyncWorksheetClient":
         if self._session is None:
-            self._session = aiohttp.ClientSession(
-                headers={"Authorization": f"Bearer {self.auth_token}"}
-            )
+            self._session = aiohttp.ClientSession(headers=self._hap_headers())
         return self
 
     async def __aexit__(self, *exc) -> None:
