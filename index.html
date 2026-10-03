@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Pull data from Nocoly into pandas, Spark, Parquet, JSON, or CSV — without the boilerplate. Modular Python client with one-shot fetch, streaming export, scheduled jobs, and schema discovery.">
+  <title>nocoly-explorer — Pull Nocoly data into pandas, Spark, Parquet</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2300d4aa'/%3E%3Ctext x='8' y='12' text-anchor='middle' font-family='monospace' font-size='11' font-weight='bold' fill='%23000'%3En%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+<!-- ===== Top Navigation ===== -->
+<nav class="topnav">
+  <div class="container topnav-inner">
+    <a href="#hero" class="brand">
+      <span class="brand-mark">n</span>
+      <span class="brand-name">nocoly-explorer</span>
+      <span class="brand-version">v0.4.1</span>
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#examples">Examples</a>
+      <a href="#playground">Playground</a>
+      <a href="#api">API</a>
+      <a href="https://github.com/rollroyces/nocoly-explorer" target="_blank" rel="noopener" class="nav-gh">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<!-- ===== Hero ===== -->
+<header id="hero" class="hero">
+  <div class="container">
+    <div class="hero-badges">
+      <a href="https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.4.1" class="badge badge-blue">v0.4.1</a>
+      <span class="badge badge-green">301 tests passing</span>
+      <span class="badge badge-blue">Python 3.10 – 3.12</span>
+      <span class="badge badge-grey">MIT + Apache 2.0</span>
+    </div>
+
+    <h1 class="hero-title">
+      Pull data from <span class="accent-blue">Nocoly</span><br>
+      into the format your team works with.
+    </h1>
+    <p class="hero-sub">
+      A modular Python client for downloading Nocoly worksheet data into
+      <strong>pandas</strong>, <strong>PySpark</strong>, <strong>CSV</strong>,
+      <strong>JSON</strong>, or partitioned <strong>Parquet</strong>. No boilerplate.
+    </p>
+
+    <div class="hero-install">
+      <div class="install-row">
+        <span class="install-prompt">$</span>
+        <code id="install-cmd">pip install "nocoly-explorer[streaming,async]"</code>
+        <button class="copy-btn" data-copy="install-cmd" title="Copy">⧉</button>
+      </div>
+      <div class="install-variants">
+        <button data-cmd='pip install nocoly-explorer'>core</button>
+        <button data-cmd='pip install "nocoly-explorer[dataframe]"'>dataframe</button>
+        <button data-cmd='pip install "nocoly-explorer[spark]"'>spark</button>
+        <button data-cmd='pip install "nocoly-explorer[streaming,async]"' class="active">streaming + async</button>
+        <button data-cmd='pip install "nocoly-explorer[service,streaming,async,test]"'>full pipeline</button>
+      </div>
+    </div>
+
+    <div class="hero-actions">
+      <a href="#playground" class="btn btn-primary">▶ Try the playground</a>
+      <a href="#examples" class="btn btn-ghost">View code examples</a>
+      <a href="https://github.com/rollroyces/nocoly-explorer" target="_blank" rel="noopener" class="btn btn-ghost">⭐ Star on GitHub</a>
+    </div>
+
+    <div class="hero-summary">
+      <div class="summary-item"><strong>4 layers</strong><span>one-shot, streaming, scheduled, schema</span></div>
+      <div class="summary-item"><strong>6 sinks</strong><span>pandas, spark, json, csv, parquet_local, parquet_s3</span></div>
+      <div class="summary-item"><strong>11 errors</strong><span>stable codes, never renamed once shipped</span></div>
+    </div>
+  </div>
+</header>
+
+<!-- ===== Features ===== -->
+<section id="features" class="section">
+  <div class="container">
+    <h2 class="section-title">Pick the layer that matches your use case</h2>
+    <p class="section-sub">They compose — start with the smallest and upgrade without rewriting your code.</p>
+
+    <div class="features-grid">
+      <div class="feature feature-green">
+        <div class="feature-icon">🟢</div>
+        <h3>One-shot fetch</h3>
+        <p>Pull a worksheet into a pandas DataFrame, Spark DataFrame, CSV, JSON, or a single file.</p>
+        <p class="feature-use"><strong>Use for:</strong> ad-hoc analysis or small exports.</p>
+        <pre><code><span class="kw">from</span> nocoly_explorer <span class="kw">import</span> WorksheetExporter
+
+df = WorksheetExporter().<span class="fn">export</span>(
+    host=<span class="str">"https://your-nocoly-host"</span>,
+    worksheet_id=<span class="str">"ws_123"</span>,
+    output_type=<span class="str">"dataframe"</span>,
+)</code></pre>
+      </div>
+
+      <div class="feature feature-blue">
+        <div class="feature-icon">🔵</div>
+        <h3>Streaming export</h3>
+        <p>Stream pages into partitioned Parquet without loading the whole worksheet into memory.</p>
+        <p class="feature-use"><strong>Use for:</strong> worksheets bigger than RAM, data-lake layouts.</p>
+        <pre><code><span class="kw">from</span> nocoly_explorer <span class="kw">import</span> (
+    AsyncWorksheetClient, StreamingExporter,
+    StreamingExportConfig, PartitionSpec,
+)</code></pre>
+      </div>
+
+      <div class="feature feature-purple">
+        <div class="feature-icon">🟣</div>
+        <h3>Scheduled jobs</h3>
+        <p>Submit an export to a small FastAPI service. Background Arq workers run it for you.</p>
+        <p class="feature-use"><strong>Use for:</strong> n8n, Airflow, cron, or any scheduler.</p>
+        <pre><code>POST /jobs  →  <span class="str">{"job_id": "..."}</span>
+GET  /jobs/{id}  →  <span class="str">status + progress</span>
+POST /jobs/{id}/cancel</code></pre>
+      </div>
+
+      <div class="feature feature-orange">
+        <div class="feature-icon">🟠</div>
+        <h3>Schema discovery</h3>
+        <p>Ask "what columns does this worksheet have and what types are they?" before exporting.</p>
+        <p class="feature-use"><strong>Use for:</strong> connecting to a new Nocoly app for the first time.</p>
+        <pre><code>schema = client.<span class="fn">get_worksheet_schema</span>()
+<span class="kw">for</span> col <span class="kw">in</span> schema.columns:
+    <span class="fn">print</span>(f<span class="str">"{col.name}: {col.type}"</span>)</code></pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Decision Guide ===== -->
+<section id="guide" class="section section-alt">
+  <div class="container">
+    <h2 class="section-title">When to use which</h2>
+    <p class="section-sub">Pick the smallest option that does the job.</p>
+    <div class="table-wrap">
+      <table class="guide-table">
+        <thead>
+          <tr><th>If you need to…</th><th>Use</th><th>Why</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Look at a worksheet once in a notebook</td><td><span class="dot dot-green"></span> One-shot fetch</td><td>Smallest setup; one import, one call</td></tr>
+          <tr><td>Save a worksheet to disk as Parquet for analysis</td><td><span class="dot dot-blue"></span> Streaming export</td><td>Handles big worksheets without OOM</td></tr>
+          <tr><td>Run the same export every hour from cron / n8n / Airflow</td><td><span class="dot dot-purple"></span> Scheduled jobs</td><td>Submit → poll; the worker does the heavy lifting</td></tr>
+          <tr><td>Build a pipeline that only pulls <em>new</em> rows each run</td><td><span class="dot dot-blue"></span> Streaming + incremental</td><td>Saves bandwidth, avoids re-processing</td></tr>
+          <tr><td>Explore what columns a worksheet has before exporting</td><td><span class="dot dot-orange"></span> Schema discovery</td><td>Avoids guessing; tells you types</td></tr>
+          <tr><td>Push exports directly into an S3 bucket</td><td><span class="dot dot-blue"></span> Streaming + parquet_s3</td><td>No local disk round-trip</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Examples ===== -->
+<section id="examples" class="section">
+  <div class="container">
+    <h2 class="section-title">Code examples</h2>
+    <p class="section-sub">Six runnable scripts under <code>examples/</code> cover each layer.</p>
+
+    <div class="tabs">
+      <div class="tab-headers">
+        <button class="tab-header active" data-tab="ex1">01 · DataFrame</button>
+        <button class="tab-header" data-tab="ex2">02 · Streaming Parquet</button>
+        <button class="tab-header" data-tab="ex3">03 · Schema discovery</button>
+        <button class="tab-header" data-tab="ex4">04 · S3 sink</button>
+        <button class="tab-header" data-tab="ex5">05 · Filters DSL</button>
+        <button class="tab-header" data-tab="ex6">06 · Submit job</button>
+      </div>
+
+      <div class="tab-panels">
+        <div class="tab-panel active" data-panel="ex1">
+<pre><code><span class="kw">import</span> os
+<span class="kw">from</span> nocoly_explorer <span class="kw">import</span> WorksheetExporter, NocolyFilter
+
+df = WorksheetExporter().<span class="fn">export</span>(
+    host=os.environ[<span class="str">"NOCOLY_HOST"</span>],
+    worksheet_id=<span class="str">"ws_customers"</span>,
+    filter_criteria=NocolyFilter.<span class="fn">and_group</span>([
+        NocolyFilter.<span class="fn">quick</span>(Status=<span class="str">"Active"</span>, _updatedAt__gt=<span class="str">"2025-01-01"</span>),
+        NocolyFilter.<span class="fn">or_group</span>([
+            NocolyFilter.<span class="fn">quick</span>(Region=<span class="str">"HK"</span>),
+            NocolyFilter.<span class="fn">quick</span>(Region=<span class="str">"SZ"</span>),
+        ]),
+    ]),
+    columns=[<span class="str">"Name"</span>, <span class="str">"Region"</span>, <span class="str">"Status"</span>, <span class="str">"_updatedAt"</span>],
+    sorts=[{<span class="str">"field"</span>: <span class="str">"_updatedAt"</span>, <span class="str">"order"</span>: <span class="str">"DESC"</span>}],
+    page_size=<span class="num">500</span>,
+    max_pages=<span class="num">25</span>,
+)
+
+<span class="fn">print</span>(df.<span class="fn">head</span>())</code></pre>
+        </div>
+
+        <div class="tab-panel" data-panel="ex2">
+<pre><code><span class="kw">import</span> asyncio
+<span class="kw">from</span> nocoly_explorer <span class="kw">import</span> (
+    AsyncWorksheetClient, StreamingExporter,
+    StreamingExportConfig, ParquetExportOptions, PartitionSpec,
+)
+
+<span class="kw">async def</span> <span class="fn">main</span>():
+    <span class="kw">async with</span> AsyncWorksheetClient(
+        base_url=os.environ[<span class="str">"NOCOLY_HOST"</span>],
+        auth_token=<span class="str">f"{os.environ['NOCOLY_APP_KEY']}:{os.environ['NOCOLY_APP_SIGN']}"</span>,
+        worksheet_id=<span class="str">"ws_orders"</span>,
+        concurrency=<span class="num">8</span>,
+    ) <span class="kw">as</span> client:
+        result = <span class="kw">await</span> StreamingExporter(
+            client=client,
+            config=StreamingExportConfig(
+                output_dir=<span class="str">"/mnt/datalake/nocoly/ws_orders"</span>,
+                worksheet_id=<span class="str">"ws_orders"</span>,
+                options=ParquetExportOptions(row_group_bytes=<span class="num">128</span>*<span class="num">1024</span>*<span class="num">1024</span>),
+                partition=PartitionSpec(column=<span class="str">"created_date"</span>, granularity=<span class="str">"day"</span>),
+            ),
+        ).<span class="fn">stream_async</span>(client, page_size=<span class="num">200</span>)
+        <span class="fn">print</span>(<span class="str">f"wrote {result.rows_written} rows"</span>)
+
+asyncio.<span class="fn">run</span>(<span class="fn">main</span>())</code></pre>
+        </div>
+
+        <div class="tab-panel" data-panel="ex3">
+<pre><code><span class="kw">from</span> nocoly_explorer.client <span class="kw">import</span> WorksheetClient
+<span class="kw">from</span> nocoly_explorer.auth <span class="kw">import</span> CredentialPair
+
+client = WorksheetClient(
+    host=<span class="str">"https://your-nocoly-host"</span>,
+    worksheet_id=<span class="str">"ws_orders"</span>,
+    credentials=CredentialPair(
+        app_key=os.environ[<span class="str">"NOCOLY_APP_KEY"</span>],
+        app_sign=os.environ[<span class="str">"NOCOLY_APP_SIGN"</span>],
+    ),
+)
+
+schema = client.<span class="fn">get_worksheet_schema</span>()
+<span class="fn">print</span>(schema.source)            <span class="cmt"># "api" or "inferred"</span>
+<span class="kw">for</span> col <span class="kw">in</span> schema.columns:
+    <span class="fn">print</span>(<span class="str">f"  {col.name}: {col.type}  nullable={col.nullable}"</span>)
+
+<span class="cmt"># Round-trip to JSON</span>
+<span class="fn">open</span>(<span class="str">"ws_orders.schema.json"</span>, <span class="str">"w"</span>).<span class="fn">write</span>(schema.<span class="fn">to_json</span>())</code></pre>
+        </div>
+
+        <div class="tab-panel" data-panel="ex4">
+<pre><code><span class="kw">import</span> pyarrow.fs <span class="kw">as</span> pafs
+<span class="kw">from</span> nocoly_explorer <span class="kw">import</span> (
+    AsyncWorksheetClient, StreamingExporter,
+    StreamingExportConfig, ParquetExportOptions, PartitionSpec,
+)
+
+fs, path = pafs.S3FileSystem.<span class="fn">from_uri</span>(<span class="str">"s3://my-bucket/nocoly/"</span>)
+
+<span class="kw">async def</span> <span class="fn">run</span>():
+    <span class="kw">async with</span> AsyncWorksheetClient(...) <span class="kw">as</span> client:
+        result = <span class="kw">await</span> StreamingExporter(
+            client=client,
+            config=StreamingExportConfig(
+                filesystem=fs,
+                output_dir=path + <span class="str">"ws_orders"</span>,
+                worksheet_id=<span class="str">"ws_orders"</span>,
+                options=ParquetExportOptions(compression=<span class="str">"snappy"</span>),
+                partition=PartitionSpec(column=<span class="str">"region"</span>, granularity=<span class="str">"day"</span>),
+            ),
+        ).<span class="fn">stream_async</span>(client, page_size=<span class="num">500</span>)
+
+asyncio.<span class="fn">run</span>(<span class="fn">run</span>())</code></pre>
+        </div>
+
+        <div class="tab-panel" data-panel="ex5">
+<pre><code><span class="kw">from</span> nocoly_explorer <span class="kw">import</span> NocolyFilter
+
+<span class="cmt"># Single field</span>
+f1 = NocolyFilter.<span class="fn">quick</span>(Status=<span class="str">"Active"</span>)
+
+<span class="cmt"># Multiple fields on the same row (AND)</span>
+f2 = NocolyFilter.<span class="fn">quick</span>(Status=<span class="str">"Active"</span>, Region=<span class="str">"HK"</span>)
+
+<span class="cmt"># Comparison operators via __suffix</span>
+f3 = NocolyFilter.<span class="fn">quick</span>(
+    _updatedAt__gt=<span class="str">"2025-01-01"</span>,
+    Amount__lte=<span class="num">10000</span>,
+    Name__contains=<span class="str">"corp"</span>,
+)
+
+<span class="cmt"># Combine with AND / OR groups (max depth: 3)</span>
+f4 = NocolyFilter.<span class="fn">and_group</span>([f1, <span class="fn">or_group</span>([f2, f3])])</code></pre>
+        </div>
+
+        <div class="tab-panel" data-panel="ex6">
+<pre><code><span class="cmt"># Requires the service running:</span>
+<span class="cmt">#   uvicorn nocoly_explorer.service:app --port 8080</span>
+<span class="cmt">#   arq nocoly_explorer.service.worker.WorkerSettings</span>
+
+<span class="kw">import</span> httpx
+
+resp = httpx.<span class="fn">post</span>(
+    <span class="str">"http://localhost:8080/jobs"</span>,
+    headers={<span class="str">"Authorization"</span>: <span class="str">f"Bearer {API_KEY}"</span>},
+    json={
+        <span class="str">"host"</span>: <span class="str">"https://your-nocoly-host"</span>,
+        <span class="str">"worksheet_id"</span>: <span class="str">"ws_orders"</span>,
+        <span class="str">"page_size"</span>: <span class="num">200</span>,
+        <span class="str">"output"</span>: {
+            <span class="str">"sink"</span>: <span class="str">"parquet_local"</span>,
+            <span class="str">"path"</span>: <span class="str">"/mnt/datalake/nocoly/ws_orders"</span>,
+            <span class="str">"partition_by"</span>: <span class="str">"created_date"</span>,
+        },
+    },
+)
+job_id = resp.<span class="fn">json</span>()[<span class="str">"job_id"</span>]
+<span class="fn">print</span>(<span class="str">f"submitted: {job_id}"</span>)</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Architecture ===== -->
+<section id="architecture" class="section section-alt">
+  <div class="container">
+    <h2 class="section-title">How a job flows</h2>
+    <p class="section-sub">One HTTP request → enqueued in Redis → Arq worker streams pages → partitioned Parquet.</p>
+
+    <div class="arch-flow">
+      <div class="arch-step arch-blue">
+        <div class="arch-tag">Caller</div>
+        <div class="arch-name">n8n / cron / notebook</div>
+        <div class="arch-detail">POST /jobs</div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-step arch-green">
+        <div class="arch-tag">API</div>
+        <div class="arch-name">FastAPI</div>
+        <div class="arch-detail">POST /jobs → enqueue</div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-step arch-purple">
+        <div class="arch-tag">Queue</div>
+        <div class="arch-name">Redis</div>
+        <div class="arch-detail">job_id, status, progress</div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-step arch-orange">
+        <div class="arch-tag">Worker</div>
+        <div class="arch-name">Arq + AsyncClient</div>
+        <div class="arch-detail">stream_async pages</div>
+      </div>
+      <div class="arch-arrow">→</div>
+      <div class="arch-step arch-blue">
+        <div class="arch-tag">Source</div>
+        <div class="arch-name">Nocoly</div>
+        <div class="arch-detail">paginated rows</div>
+      </div>
+    </div>
+
+    <div class="arch-output">
+      <div class="arch-out-arrow">↓</div>
+      <div class="arch-step arch-green arch-output-step">
+        <div class="arch-tag">Sink</div>
+        <div class="arch-name">Partitioned Parquet</div>
+        <div class="arch-detail">region=HK/data_0.parquet · region=SZ/data_0.parquet</div>
+      </div>
+    </div>
+
+    <p class="arch-note">
+      Memory stays bounded by <code>row_group_bytes</code> rather than growing with row count.
+      A <code>cancel</code> request flips a flag the worker checks between pages — cooperative cancellation, no orphaned half-written files.
+    </p>
+  </div>
+</section>
+
+<!-- ===== Playground ===== -->
+<section id="playground" class="section">
+  <div class="container">
+    <h2 class="section-title">Playground <span class="title-badge">simulated</span></h2>
+    <p class="section-sub">
+      Run a mocked export end-to-end in your browser. Pick a worksheet, choose an output format, watch pages stream in.
+      This is a UI simulation of <code>WorksheetExporter</code> / <code>StreamingExporter</code> — the real library runs in Python.
+    </p>
+
+    <div class="playground">
+      <div class="playground-config">
+        <h3>Configuration</h3>
+
+        <label class="field">
+          <span>Worksheet</span>
+          <select id="pg-worksheet">
+            <option value="customers">ws_customers · Customers (487 rows)</option>
+            <option value="orders">ws_orders · Orders (1,240 rows)</option>
+            <option value="inventory">ws_inventory · Inventory (8,032 rows)</option>
+            <option value="incidents">ws_incidents · Incidents (25,000 rows)</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span>Output</span>
+          <select id="pg-output">
+            <option value="dataframe">dataframe — pandas rows</option>
+            <option value="json">json — list of dicts</option>
+            <option value="csv">csv — formatted text</option>
+            <option value="parquet">parquet — partitioned on disk</option>
+          </select>
+        </label>
+
+        <div class="field">
+          <span>Filter</span>
+          <div class="filter-builder">
+            <label><input type="checkbox" id="pg-f-active" checked> Status = Active</label>
+            <label><input type="checkbox" id="pg-f-recent"> _updatedAt > 2025-01-01</label>
+            <label><input type="checkbox" id="pg-f-region"> Region ∈ {HK, SZ}</label>
+          </div>
+        </div>
+
+        <div class="field">
+          <span>Page size</span>
+          <input type="range" id="pg-pagesize" min="50" max="500" step="50" value="200">
+          <span id="pg-pagesize-label" class="range-label">200</span>
+        </div>
+
+        <div class="pg-actions">
+          <button id="pg-run" class="btn btn-primary">▶ Run export</button>
+          <button id="pg-cancel" class="btn btn-ghost" disabled>■ Cancel</button>
+          <button id="pg-reset" class="btn btn-ghost">↺ Reset</button>
+        </div>
+
+        <div class="pg-meta">
+          <div><span>Auth</span><code>NOCOLY_APP_KEY:***</code></div>
+          <div><span>Runtime</span><code>local · Python 3.12</code></div>
+        </div>
+      </div>
+
+      <div class="playground-output">
+        <div class="pg-header">
+          <h3>Output</h3>
+          <div class="pg-status" id="pg-status">Idle</div>
+        </div>
+
+        <div class="pg-progress">
+          <div class="pg-progress-bar"><div id="pg-progress-fill"></div></div>
+          <div class="pg-progress-text" id="pg-progress-text">0 / 0 pages · 0 rows</div>
+        </div>
+
+        <div class="pg-log" id="pg-log">
+          <div class="pg-log-empty">Click <strong>Run export</strong> to start a simulated export. Each "page" is a 200-row batch that streams into the chosen sink.</div>
+        </div>
+
+        <div class="pg-result" id="pg-result" hidden></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===== API Reference ===== -->
+<section id="api" class="section section-alt">
+  <div class="container">
+    <h2 class="section-title">Service API</h2>
+    <p class="section-sub">
+      The FastAPI service orchestrates exports from any scheduler. Authenticate with
+      <code>Authorization: Bearer <NOCOLY_SERVICE_API_KEY></code> when set.
+    </p>
+
+    <div class="table-wrap">
+      <table class="api-table">
+        <thead>
+          <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><span class="method get">GET</span></td><td><code>/healthz</code></td><td>Liveness — always <code>200</code></td></tr>
+          <tr><td><span class="method get">GET</span></td><td><code>/readyz</code></td><td><code>200</code> if Redis reachable, else <code>503</code></td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/jobs</code></td><td>Submit — returns <code>{"job_id": "..."}</code></td></tr>
+          <tr><td><span class="method get">GET</span></td><td><code>/jobs/{id}</code></td><td>Status + progress + rows_fetched</td></tr>
+          <tr><td><span class="method get">GET</span></td><td><code>/jobs/{id}/result</code></td><td>Artifact path — <code>409</code> if not yet succeeded</td></tr>
+          <tr><td><span class="method post">POST</span></td><td><code>/jobs/{id}/cancel</code></td><td>Cooperative cancellation at page boundary</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 class="subsection-title">Submit a job</h3>
+    <pre class="api-example"><code>curl -X POST http://localhost:8080/jobs \
+  -H <span class="str">"Authorization: Bearer $NOCOLY_SERVICE_API_KEY"</span> \
+  -H <span class="str">"Content-Type: application/json"</span> \
+  -d <span class="str">'{
+    "host": "https://your-nocoly-host",
+    "worksheet_id": "ws_123",
+    "page_size": 200,
+    "max_pages": 1000,
+    "concurrency": 8,
+    "output": {
+      "sink": "parquet_local",
+      "path": "/mnt/datalake/nocoly/ws_123",
+      "partition_by": "created_date",
+      "partition_granularity": "day"
+    }
+  }'</span>
+<span class="cmt"># {"job_id": "a1b2c3..."}</span></code></pre>
+
+    <h3 class="subsection-title">Poll status</h3>
+    <pre class="api-example"><code>curl http://localhost:8080/jobs/a1b2c3... \
+  -H <span class="str">"Authorization: Bearer $NOCOLY_SERVICE_API_KEY"</span>
+<span class="cmt"># {"job_id":"a1b2c3...","status":"running","progress_pct":42,
+#  "rows_fetched":12500,"started_at":"...","finished_at":null}</span></code></pre>
+  </div>
+</section>
+
+<!-- ===== Error Codes ===== -->
+<section id="errors" class="section">
+  <div class="container">
+    <h2 class="section-title">Error codes</h2>
+    <p class="section-sub">
+      Stable string <code>code</code> on every exception — part of the public contract, never renamed once shipped.
+    </p>
+    <div class="table-wrap">
+      <table class="error-table">
+        <thead><tr><th>Code</th><th>Exception</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td><code>nocoly_error</code></td><td><code>NocolyError</code></td><td>Base class</td></tr>
+          <tr><td><code>missing_credentials</code></td><td><code>MissingCredentialsError</code></td><td><code>app_key</code> / <code>app_sign</code> not resolvable</td></tr>
+          <tr><td><code>output_validation</code></td><td><code>OutputValidationError</code></td><td>Inconsistent output spec</td></tr>
+          <tr><td><code>environment_detection</code></td><td><code>EnvironmentDetectionError</code></td><td><code>NOCOLY_DETECT_FORCE</code> invalid</td></tr>
+          <tr><td><code>schema_drift</code></td><td><code>SchemaDriftError</code></td><td>Drift policy = error and columns changed</td></tr>
+          <tr><td><code>cardinality_exceeded</code></td><td><code>CardinalityExceededError</code></td><td>Partition column > <code>max_partition_cardinality</code></td></tr>
+          <tr><td><code>async_client_error</code></td><td><code>AsyncClientError</code></td><td>Base for async pagination failures</td></tr>
+          <tr><td><code>pagination_limit_exceeded</code></td><td><code>PaginationLimitExceeded</code></td><td>Server never returned <code>has_more=False</code></td></tr>
+          <tr><td><code>service_error</code></td><td><code>ServiceError</code></td><td>Base for service-layer failures</td></tr>
+          <tr><td><code>job_not_found</code></td><td><code>JobNotFound</code></td><td><code>job_id</code> not in Redis</td></tr>
+          <tr><td><code>job_not_ready</code></td><td><code>JobNotReady</code></td><td><code>result</code> called before succeeded</td></tr>
+          <tr><td><code>job_cancelled</code></td><td><code>JobCancelled</code></td><td><code>cancel_check</code> flipped mid-pagination</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Footer ===== -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand"><span class="brand-mark">n</span> nocoly-explorer</div>
+        <p class="footer-text">
+          Modular Python client for pulling Nocoly worksheet data into the formats your team works with.
+        </p>
+      </div>
+      <div>
+        <h4>Links</h4>
+        <ul>
+          <li><a href="https://github.com/rollroyces/nocoly-explorer" target="_blank" rel="noopener">GitHub repository</a></li>
+          <li><a href="https://github.com/rollroyces/nocoly-explorer/releases" target="_blank" rel="noopener">Releases</a></li>
+          <li><a href="https://github.com/rollroyces/nocoly-explorer/issues" target="_blank" rel="noopener">Issues</a></li>
+          <li><a href="https://pypi.org/project/nocoly-explorer/" target="_blank" rel="noopener">PyPI</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Resources</h4>
+        <ul>
+          <li><a href="#examples">Examples</a></li>
+          <li><a href="#playground">Playground</a></li>
+          <li><a href="#api">Service API</a></li>
+          <li><a href="#errors">Error codes</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>License</h4>
+        <p class="footer-text">Dual-licensed under MIT and Apache 2.0 at your option.</p>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>© 2026 rollroyces · nocoly-explorer v0.4.1</span>
+      <span>This web interface is a static site. The library itself is Python.</span>
+    </div>
+  </div>
+</footer>
+
+<button id="back-to-top" class="back-to-top" aria-label="Back to top" hidden>↑</button>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+
+<script data-minimax-analytics="minimax-website-analytics-v1">(function(){
+"use strict";
+var t="eyJ2IjoxLCJraWQiOiJwcmUtY24tMjAyNjA4MTUtdjEiLCJiaXpfaWQiOiJNYXZpcyIsIm5vZGVfaWQiOiI0NDgyMzY4MjYzMDA4MjUiLCJpc3N1ZWRfYXQiOjE3OTA5ODU3NTczODF9.sHYyynPLvAzDHDjvocNvwF9LN0n6pLiPo8daSpT9fKg",u="https://agent.minimax.cn/minimax-cloud/api/v1/website-traffic/page-views",last="";
+function path(){
+var h=window.location.hash||"",p=h.indexOf("#!")===0?h.slice(2):h.indexOf("#/")===0?h.slice(1):(window.location.pathname||"/");
+p=p.split(/[?#]/,1)[0]||"/";
+if(p.charAt(0)!=="/")p="/"+p;
+p=p.replace(/\/+/g,"/").replace(/%([0-9a-fA-F]{2})/g,function(_,x){var c=String.fromCharCode(parseInt(x,16));return /[A-Za-z0-9._~-]/.test(c)?c:"%"+x.toUpperCase();});
+if(p.length>1)p=p.replace(/\/+$/,"");
+return p||"/";
+}
+function send(){
+var p=path();if(p===last)return;last=p;
+var b="v=1&t="+encodeURIComponent(t)+"&p="+encodeURIComponent(p),ok=false;
+try{if(navigator.sendBeacon){ok=navigator.sendBeacon(u,new Blob([b],{type:"application/x-www-form-urlencoded;charset=UTF-8"}));}}catch(e){}
+if(!ok){try{fetch(u,{method:"POST",body:b,keepalive:true,mode:"no-cors",credentials:"omit",headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8"}});}catch(e){}}
+}
+["pushState","replaceState"].forEach(function(n){var f=history[n];if(!f)return;history[n]=function(){var r=f.apply(this,arguments);setTimeout(send,0);return r;};});
+window.addEventListener("popstate",send);window.addEventListener("hashchange",send);send();
+})();</script>
+<style>
+#minimax-floating-ball {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  padding: 10px 12px;
+  background: #222222;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  color: #F8F8F8;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  z-index: 9999;
+  transition: all 0.3s ease;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+#minimax-floating-ball:hover {
+  transform: translateY(-2px);
+  background: #383838;
+}
+.minimax-ball-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.minimax-logo-wave {
+  width: 20px;
+  height: 20px;
+  background-image: url("data:image/svg+xml,%3Csvg%20width%3D%2256%22%20height%3D%2256%22%20viewBox%3D%220%200%2056%2056%22%20fill%3D%22none%22%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%3E%0A%3Cpath%20d%3D%22M28.3348%207.91943C32.873%207.91949%2037.04%209.39135%2040.3124%2011.8472C40.5409%2012.0124%2040.7654%2012.1824%2040.9852%2012.3579C42.1524%2011.7112%2044.304%2010.9991%2046.5702%2012.6655C48.3992%2014.0113%2047.1291%2015.8086%2045.7957%2015.3159C45.0606%2015.0442%2044.1229%2014.5753%2043.3602%2014.6538C45.8851%2017.6085%2047.4032%2021.4033%2047.4032%2025.5415C47.4031%2029.2918%2046.153%2032.7573%2044.0399%2035.5737C43.9544%2035.689%2043.8675%2035.8033%2043.7791%2035.9165C43.7734%2035.9238%2043.7683%2035.9317%2043.7625%2035.939L44.1258%2036.2153L44.1229%2036.2163C46.3725%2037.9282%2046.7697%2041.0832%2045.0116%2043.272C43.2563%2045.4561%2040.0071%2045.8422%2037.7606%2044.1333L35.2606%2042.231C34.9961%2042.0299%2034.6857%2041.9712%2034.4002%2042.022C34.3457%2042.0362%2034.2909%2042.0502%2034.2362%2042.064C33.8268%2042.2022%2033.5038%2042.5721%2033.5038%2043.061C33.5067%2045.8275%2031.1993%2048.0717%2028.3514%2048.0806H28.326C25.4779%2048.0719%2023.1698%2045.8277%2023.1727%2043.061C23.1726%2042.5624%2022.8367%2042.1879%2022.4159%2042.0562C22.3774%2042.0464%2022.339%2042.0368%2022.3006%2042.0269C22.0086%2041.9683%2021.6878%2042.0237%2021.4159%2042.231L18.9159%2044.1333C16.6692%2045.8408%2013.4201%2045.4559%2011.6649%2043.27C9.90673%2041.0826%2010.3049%2037.9282%2012.5545%2036.2163L12.911%2035.9438C10.9449%2033.4341%209.67323%2030.4271%209.3602%2027.1636L9.34555%2026.9937C9.33836%2026.9108%209.33199%2026.8278%209.32602%2026.7446C9.32228%2026.6913%209.31852%2026.6379%209.31528%2026.5845C9.30641%2026.4417%209.30001%2026.2985%209.29477%2026.1548C9.29374%2026.1249%209.29272%2026.0949%209.29184%2026.0649C9.28644%2025.8911%209.28306%2025.7166%209.28305%2025.5415C9.28306%2021.4826%2010.7431%2017.7541%2013.1815%2014.8247C12.367%2014.3304%2011.1334%2014.9767%2010.2157%2015.3159C8.8822%2015.8087%207.58607%2013.9754%209.44223%2012.6655C12.3677%2010.6014%2014.5614%2011.8145%2015.4706%2012.5444C15.5911%2012.4448%2015.7134%2012.347%2015.8368%2012.2505C19.182%209.55277%2023.5528%207.91943%2028.3348%207.91943Z%22%20fill%3D%22%23EDEDED%22%20style%3D%22fill%3A%23EDEDED%3Bfill%3Acolor%28display-p3%200.9278%200.9278%200.9278%29%3Bfill-opacity%3A1%3B%22%2F%3E%0A%3C%2Fsvg%3E%0A");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  background-color: transparent;
+  border-radius: 0;
+}
+
+.minimax-ball-text {
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.minimax-close-icon {
+  margin-left: 8px;
+  font-size: 16px;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.minimax-close-icon:hover {
+  opacity: 1;
+}
+</style>
+<div id="minimax-floating-ball">
+  <div class="minimax-ball-content">
+    <div class="minimax-logo-wave"></div>
+    <span class="minimax-ball-text">Created by MiniMax Agent</span>
+  </div>
+  <div class="minimax-close-icon">×</div>
+</div>
+<script>
+// Initialize floating ball functionality
+function initFloatingBall() {
+  const ball = document.getElementById('minimax-floating-ball');
+  if (!ball) return;
+
+  // Initial animation
+  ball.style.opacity = '0';
+  ball.style.transform = 'translateY(20px)';
+
+  setTimeout(() => {
+    ball.style.opacity = '1';
+    ball.style.transform = 'translateY(0)';
+  }, 500);
+
+  // Handle logo click
+  const ballContent = ball.querySelector('.minimax-ball-content');
+  ballContent.addEventListener('click', function (e) {
+    e.stopPropagation();
+    window.open('https://agent.minimax.cn/', '_blank');
+    ball.style.transform = 'scale(0.95)';
+    setTimeout(() => {
+      ball.style.transform = 'scale(1)';
+    }, 100);
+  });
+
+  // Handle close button click
+  const closeIcon = ball.querySelector('.minimax-close-icon');
+  closeIcon.addEventListener('click', function (e) {
+    e.stopPropagation();
+    ball.style.opacity = '0';
+    ball.style.transform = 'translateY(20px)';
+
+    setTimeout(() => {
+      ball.style.display = 'none';
+    }, 300);
+  });
+}
+
+// Initialize when DOM is ready
+document.addEventListener('DOMContentLoaded', initFloatingBall); 
+</script>
+</body>
+</html>
