@@ -750,6 +750,18 @@ tr:last-child td { border-bottom: none; }
   margin-bottom: 12px;
 }
 .footer-text { color: var(--fg-muted); font-size: 14px; margin: 0; }
+.footer-author {
+  color: var(--fg-muted);
+  font-size: 13px;
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border-soft);
+}
+.footer-author a {
+  color: var(--accent);
+  font-weight: 600;
+}
+.footer-author a:hover { text-decoration: underline; }
 .footer h4 {
   font-size: 13px;
   text-transform: uppercase;
