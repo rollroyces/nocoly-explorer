@@ -12,6 +12,7 @@
 [![Tests](https://img.shields.io/badge/tests-301%20passed-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-3.10–3.12-blue)]()
 [![Wheel](https://img.shields.io/badge/wheel-39_KB-blue)](https://github.com/rollroyces/nocoly-explorer/releases/download/v0.4.1/nocoly_explorer-0.4.1-py3-none-any.whl)
+[![Web Interface](https://img.shields.io/badge/web-try%20the%20playground-6ce5c1)](https://rollroyces.github.io/nocoly-explorer/)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache%202.0-lightgrey)]()
 
 </div>
@@ -119,6 +120,7 @@ can be upgraded later without rewriting your code.
 - [What you get](#what-you-get)
 - [How a job flows](#how-a-job-flows)
 - [Live demo](#live-demo)
+- [Web interface](#web-interface)
 - [Installation](#installation)
 - [Concepts you may need](#concepts-you-may-need)
 - [Layer 1 — `WorksheetExporter`](#layer-1--worksheetexporter-v011)
@@ -203,6 +205,68 @@ asciinema play docs/assets/demo.cast
 <p align="center">
   <img src="docs/assets/demo.gif" alt="terminal demo" width="800">
 </p>
+
+---
+
+## Web interface
+
+A static documentation site + interactive playground is published at
+**<https://rollroyces.github.io/nocoly-explorer/>**. You don't need to
+install anything to use it — it's just HTML/CSS/JS hosted on GitHub Pages.
+
+If you'd rather read the README in your browser with code highlighting and
+section navigation, that's the link. If you want to try the library without
+cloning the repo, that's also the link.
+
+### What's on the site
+
+| Section | What it gives you |
+|---|---|
+| **Features** | Side-by-side overview of all four layers (🟢 one-shot, 🔵 streaming, 🟣 scheduled, 🟠 schema) with the smallest-viable code snippet for each |
+| **Decision guide** | "If you need X, use Y" table — pick the smallest option that does the job |
+| **Examples** | Tabbed code examples for all six scripts under `examples/`, covering each layer and the S3 sink |
+| **Architecture** | Visual flow diagram for the FastAPI + Redis + Arq worker pipeline |
+| **Playground** | Interactive browser simulation of `WorksheetExporter` / `StreamingExporter`. Pick a sample worksheet, build a filter, choose an output format (`dataframe` / `json` / `csv` / `parquet`), and watch pages stream in with a live progress bar and cancel button |
+| **API reference** | All six service endpoints (`/healthz`, `/readyz`, `POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/result`, `POST /jobs/{id}/cancel`) with `curl` examples |
+| **Error codes** | All 11 stable `NOCOLY_xxx` codes, when each one fires, and the recommended catch pattern |
+
+### How to use it
+
+1. **Open <https://rollroyces.github.io/nocoly-explorer/>** in any browser.
+2. **Skim the Features grid** (top of the page after the hero) to pick the
+   layer that matches your use case. If you're not sure, the **Decision guide**
+   table below answers "I need to…" with the right call.
+3. **Copy a code snippet** from the Examples tab — every code block has a
+   one-click copy button (the `⧉` icon in the top-right of each block).
+4. **Try the Playground** if you want to see what an export actually looks
+   like before installing anything. It runs against mocked data, not a real
+   Nocoly server, so you can experiment with filter clauses, page sizes, and
+   output formats freely. Click any of the four sample worksheets, toggle the
+   filter checkboxes, hit **▶ Run export**, and watch the simulated log +
+   progress bar fill up.
+5. **For service deployments**, jump to the **API reference** section for
+   endpoint details, then to **Examples → 06 · Submit job** for the `httpx`
+   submission snippet.
+
+### What it is *not*
+
+The playground is a **UI simulation**, not the library itself. It uses
+hand-written mock worksheets (Customers / Orders / Inventory / Incidents) to
+demonstrate what an export looks like end-to-end — schema inference,
+partition tree, cancellation — without needing a real Nocoly server. To run
+against real data, install the library and use the [Quick start](#quick-start)
+below.
+
+The site itself is a pure static site served from the `gh-pages` branch of
+this repository. No backend, no build step. If you want to host your own copy
+locally:
+
+```bash
+git clone https://github.com/rollroyces/nocoly-explorer.git
+git checkout gh-pages
+# open index.html in your browser, or:
+python3 -m http.server 8000
+```
 
 ---
 
