@@ -85,3 +85,69 @@ class JobCancelled(NocolyError):
     """
 
     code = "job_cancelled"
+
+
+class NocolyWriteError(NocolyError):
+    """Base exception for write (add/update/upsert/delete) failures."""
+
+    code = "nocoly_write_error"
+
+
+class WriteValidationError(NocolyWriteError):
+    """Raised when write inputs are invalid (wrong type, missing key, empty payload).
+
+    This is a client-side guard — the request was never sent. Catch it to
+    distinguish "fix your call" from "the server rejected it".
+    """
+
+    code = "write_validation"
+
+
+class WriteBatchError(NocolyWriteError):
+    """Raised when one or more batches in a write call failed.
+
+    The exception carries ``failures``: a list of
+    :class:`WriteBatchFailureInfo` describing which batch failed and why.
+    Use ``exc.failures`` for partial-success reporting when the caller
+    passed ``fail_fast=False`` on the write call.
+    """
+
+    code = "write_batch"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failures: list["WriteBatchFailureInfo"] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failures: list[WriteBatchFailureInfo] = list(failures or [])
+
+
+class WriteBatchFailureInfo:
+    """One failed batch in a :class:`WriteBatchError`.
+
+    Attributes are intentionally simple so the failure can be logged or
+    JSON-serialized without dragging the exception along.
+    """
+
+    __slots__ = ("batch_index", "status_code", "body", "error")
+
+    def __init__(
+        self,
+        *,
+        batch_index: int,
+        status_code: int | None,
+        body: str = "",
+        error: str | None = None,
+    ) -> None:
+        self.batch_index = batch_index
+        self.status_code = status_code
+        self.body = body
+        self.error = error
+
+    def __repr__(self) -> str:  # pragma: no cover - debug aid
+        return (
+            f"WriteBatchFailureInfo(batch_index={self.batch_index}, "
+            f"status_code={self.status_code}, error={self.error!r})"
+        )
