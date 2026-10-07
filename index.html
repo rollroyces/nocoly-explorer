@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Pull data from Nocoly into pandas, Spark, Parquet, JSON, or CSV — without the boilerplate. Modular Python client with one-shot fetch, streaming export, scheduled jobs, and schema discovery.">
-  <title>nocoly-explorer — Pull Nocoly data into pandas, Spark, Parquet</title>
+  <meta name="description" content="Read and write Nocoly worksheet data from Python — pandas, PySpark, Parquet, JSON, or CSV. Modular client with one-shot fetch, streaming export, scheduled jobs, schema discovery, and a worksheet writer (v0.5.0).">
+  <title>nocoly-explorer — Read & write Nocoly worksheets from Python</title>
   <link rel="stylesheet" href="styles.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2300d4aa'/%3E%3Ctext x='8' y='12' text-anchor='middle' font-family='monospace' font-size='11' font-weight='bold' fill='%23000'%3En%3C/text%3E%3C/svg%3E">
 </head>
@@ -16,7 +16,7 @@
     <a href="#hero" class="brand">
       <span class="brand-mark">n</span>
       <span class="brand-name">nocoly-explorer</span>
-      <span class="brand-version">v0.4.1</span>
+      <span class="brand-version">v0.5.0</span>
     </a>
     <div class="nav-links">
       <a href="#features">Features</a>
@@ -32,20 +32,21 @@
 <header id="hero" class="hero">
   <div class="container">
     <div class="hero-badges">
-      <a href="https://github.com/rollroyces/nocoly-explorer/releases/tag/v0.4.1" class="badge badge-blue">v0.4.1</a>
-      <span class="badge badge-green">301 tests passing</span>
+      <a href="https://github.com/rollroyces/nocoly-explorer/pull/20" class="badge badge-blue">v0.5.0 (PR #20)</a>
+      <span class="badge badge-green">362 tests passing</span>
       <span class="badge badge-blue">Python 3.10 – 3.12</span>
       <span class="badge badge-grey">MIT + Apache 2.0</span>
     </div>
 
     <h1 class="hero-title">
-      Pull data from <span class="accent-blue">Nocoly</span><br>
-      into the format your team works with.
+      Read &amp; write <span class="accent-blue">Nocoly</span> worksheets<br>
+      from Python — no boilerplate.
     </h1>
     <p class="hero-sub">
       A modular Python client for downloading Nocoly worksheet data into
       <strong>pandas</strong>, <strong>PySpark</strong>, <strong>CSV</strong>,
-      <strong>JSON</strong>, or partitioned <strong>Parquet</strong>. No boilerplate.
+      <strong>JSON</strong>, or partitioned <strong>Parquet</strong> — and for
+      writing rows back with the new v0.5.0 <code>WorksheetWriter</code>.
     </p>
 
     <div class="hero-install">
@@ -70,9 +71,9 @@
     </div>
 
     <div class="hero-summary">
-      <div class="summary-item"><strong>4 layers</strong><span>one-shot, streaming, scheduled, schema</span></div>
-      <div class="summary-item"><strong>6 sinks</strong><span>pandas, spark, json, csv, parquet_local, parquet_s3</span></div>
-      <div class="summary-item"><strong>11 errors</strong><span>stable codes, never renamed once shipped</span></div>
+      <div class="summary-item"><strong>4 layers + 1 writer</strong><span>one-shot, streaming, scheduled, schema, write</span></div>
+      <div class="summary-item"><strong>7 examples</strong><span>under <code>examples/</code> — including the v0.5.0 writer</span></div>
+      <div class="summary-item"><strong>14 errors</strong><span>stable codes, never renamed once shipped</span></div>
     </div>
   </div>
 </header>
@@ -128,6 +129,26 @@ POST /jobs/{id}/cancel</code></pre>
 <span class="kw">for</span> col <span class="kw">in</span> schema.columns:
     <span class="fn">print</span>(f<span class="str">"{col.name}: {col.type}"</span>)</code></pre>
       </div>
+
+      <div class="feature feature-teal">
+        <div class="feature-icon">🟢</div>
+        <h3>Worksheet writer <span class="badge-new">v0.5.0</span></h3>
+        <p>Write rows back to Nocoly: <strong>add</strong>, <strong>update</strong>, <strong>upsert</strong>, and <strong>delete</strong>. Sync and async; batched + retried.</p>
+        <p class="feature-use"><strong>Use for:</strong> round-tripping from one worksheet to another, syncing external pipelines, ETL between systems.</p>
+        <pre><code><span class="kw">from</span> nocoly_explorer <span class="kw">import</span> WorksheetWriter
+<span class="kw">from</span> nocoly_explorer.auth <span class="kw">import</span> CredentialPair
+
+writer = WorksheetWriter(
+    host=<span class="str">"https://your-nocoly-host"</span>,
+    worksheet_id=<span class="str">"ws_123"</span>,
+    credentials=CredentialPair(app_key=<span class="str">"..."</span>, app_sign=<span class="str">"..."</span>),
+)
+result = writer.<span class="fn">add_rows</span>([
+    {<span class="str">"id"</span>: <span class="num">1</span>, <span class="str">"name"</span>: <span class="str">"alice"</span>},
+    {<span class="str">"id"</span>: <span class="num">2</span>, <span class="str">"name"</span>: <span class="str">"bob"</span>},
+])
+<span class="fn">print</span>(result.rows_succeeded, <span class="str">"/"</span>, result.rows_attempted)</code></pre>
+      </div>
     </div>
   </div>
 </section>
@@ -149,6 +170,7 @@ POST /jobs/{id}/cancel</code></pre>
           <tr><td>Build a pipeline that only pulls <em>new</em> rows each run</td><td><span class="dot dot-blue"></span> Streaming + incremental</td><td>Saves bandwidth, avoids re-processing</td></tr>
           <tr><td>Explore what columns a worksheet has before exporting</td><td><span class="dot dot-orange"></span> Schema discovery</td><td>Avoids guessing; tells you types</td></tr>
           <tr><td>Push exports directly into an S3 bucket</td><td><span class="dot dot-blue"></span> Streaming + parquet_s3</td><td>No local disk round-trip</td></tr>
+          <tr><td>Write rows back to Nocoly (add / update / upsert / delete)</td><td><span class="dot dot-teal"></span> <code>WorksheetWriter</code> / <code>AsyncWorksheetWriter</code> (v0.5.0)</td><td>Same auth + retry as the read side; 4 input formats (list / pandas / pyarrow / file path)</td></tr>
         </tbody>
       </table>
     </div>
@@ -159,7 +181,7 @@ POST /jobs/{id}/cancel</code></pre>
 <section id="examples" class="section">
   <div class="container">
     <h2 class="section-title">Code examples</h2>
-    <p class="section-sub">Six runnable scripts under <code>examples/</code> cover each layer.</p>
+    <p class="section-sub">Seven runnable scripts under <code>examples/</code> cover each layer — including the v0.5.0 writer.</p>
 
     <div class="tabs">
       <div class="tab-headers">
@@ -169,6 +191,7 @@ POST /jobs/{id}/cancel</code></pre>
         <button class="tab-header" data-tab="ex4">04 · S3 sink</button>
         <button class="tab-header" data-tab="ex5">05 · Filters DSL</button>
         <button class="tab-header" data-tab="ex6">06 · Submit job</button>
+        <button class="tab-header" data-tab="ex7">07 · Worksheet writer <span class="badge-new">new</span></button>
       </div>
 
       <div class="tab-panels">
@@ -313,6 +336,41 @@ resp = httpx.<span class="fn">post</span>(
 )
 job_id = resp.<span class="fn">json</span>()[<span class="str">"job_id"</span>]
 <span class="fn">print</span>(<span class="str">f"submitted: {job_id}"</span>)</code></pre>
+        </div>
+
+        <div class="tab-panel" data-panel="ex7">
+<pre><code><span class="kw">import</span> os
+<span class="kw">from</span> nocoly_explorer <span class="kw">import</span> WorksheetWriter
+<span class="kw">from</span> nocoly_explorer.auth <span class="kw">import</span> CredentialPair
+
+writer = WorksheetWriter(
+    host=os.environ[<span class="str">"NOCOLY_HOST"</span>],
+    worksheet_id=<span class="str">"ws_orders"</span>,
+    credentials=CredentialPair(
+        app_key=os.environ[<span class="str">"NOCOLY_APP_KEY"</span>],
+        app_sign=os.environ[<span class="str">"NOCOLY_APP_SIGN"</span>],
+    ),
+)
+
+<span class="cmt"># add rows — list of dicts, DataFrame, pyarrow, or a file path</span>
+result = writer.<span class="fn">add_rows</span>([
+    {<span class="str">"id"</span>: <span class="num">1</span>, <span class="str">"name"</span>: <span class="str">"alice"</span>, <span class="str">"region"</span>: <span class="str">"HK"</span>},
+    {<span class="str">"id"</span>: <span class="num">2</span>, <span class="str">"name"</span>: <span class="str">"bob"</span>,   <span class="str">"region"</span>: <span class="str">"SZ"</span>},
+])
+<span class="fn">print</span>(result.rows_succeeded, <span class="str">"/"</span>, result.rows_attempted)
+
+<span class="cmt"># update / delete by key</span>
+writer.<span class="fn">upsert_rows</span>([{<span class="str">"id"</span>: <span class="num">1</span>, <span class="str">"region"</span>: <span class="str">"HK-W"</span>}], key_column=<span class="str">"id"</span>)
+writer.<span class="fn">delete_rows</span>(row_ids=[<span class="num">2</span>, <span class="num">3</span>])
+
+<span class="cmt"># async variant: same API, concurrent under TokenBucket</span>
+<span class="kw">from</span> nocoly_explorer <span class="kw">import</span> AsyncWorksheetWriter
+<span class="kw">async with</span> AsyncWorksheetWriter(
+    base_url=os.environ[<span class="str">"NOCOLY_HOST"</span>],
+    auth_token=<span class="str">f"{os.environ['NOCOLY_APP_KEY']}:{os.environ['NOCOLY_APP_SIGN']}"</span>,
+    worksheet_id=<span class="str">"ws_orders"</span>,
+) <span class="kw">as</span> w:
+    <span class="kw">await</span> w.<span class="fn">add_rows</span>(df)</code></pre>
         </div>
       </div>
     </div>

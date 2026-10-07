@@ -16,6 +16,7 @@
   --orange: #ffa657;
   --red: #ff7b72;
   --yellow: #d2a8ff;
+  --teal: #4ecdc4;
 
   --code-bg: #0a0f1f;
   --code-fg: #cdd6f4;
@@ -158,6 +159,22 @@ code {
 .badge-blue { color: var(--blue); border-color: rgba(88, 166, 255, 0.3); }
 .badge-green { color: var(--green); border-color: rgba(63, 185, 80, 0.3); }
 .badge-grey { color: var(--fg-dim); }
+
+/* Inline "new" / version pill inside h3 headings */
+.badge-new {
+  display: inline-block;
+  margin-left: 0.5em;
+  padding: 2px 8px;
+  font-size: 0.65em;
+  font-weight: 600;
+  color: var(--teal);
+  background: rgba(78, 205, 196, 0.12);
+  border: 1px solid rgba(78, 205, 196, 0.35);
+  border-radius: 999px;
+  vertical-align: middle;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
 
 .hero-title {
   font-size: clamp(36px, 5vw, 56px);
@@ -355,6 +372,7 @@ code {
 .feature-blue::before { background: var(--blue); }
 .feature-purple::before { background: var(--purple); }
 .feature-orange::before { background: var(--orange); }
+.feature-teal::before { background: var(--teal); }
 
 .feature-icon { font-size: 22px; }
 .feature h3 {
@@ -434,6 +452,7 @@ tr:last-child td { border-bottom: none; }
 .dot-blue { background: var(--blue); }
 .dot-purple { background: var(--purple); }
 .dot-orange { background: var(--orange); }
+.dot-teal { background: var(--teal); }
 
 .method {
   display: inline-block;
