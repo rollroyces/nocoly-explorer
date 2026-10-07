@@ -43,7 +43,7 @@ from .exceptions import (
     WriteBatchFailureInfo,
     WriteValidationError,
 )
-from .writer_inputs import coerce_to_rows, normalize_batch_size
+from .writer_inputs import coerce_to_rows, encode_payload, normalize_batch_size
 
 try:  # Lazy import — the writer is unusable without requests, but a stub
     import requests
@@ -166,7 +166,32 @@ class WorksheetWriter:
         self.upsert_endpoint = upsert_endpoint or self.UPSERT_ENDPOINT
         self.delete_endpoint = delete_endpoint or self.DELETE_ENDPOINT
         self._session = requests.Session()
+        self._closed = False
         self._logger = logger or _LOGGER
+
+    # --- Resource lifecycle ---------------------------------------------------
+
+    def close(self) -> None:
+        """Close the underlying HTTP session. Idempotent."""
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            self._session.close()
+        except Exception:  # pragma: no cover - close on a stubbed session
+            pass
+
+    def __enter__(self) -> "WorksheetWriter":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:  # pragma: no cover - last-resort cleanup
+        try:
+            self.close()
+        except Exception:
+            pass
 
     # --- Header / URL helpers -------------------------------------------------
 
@@ -415,7 +440,7 @@ class WorksheetWriter:
                     response = self._session.request(
                         http_method,
                         url,
-                        json=payload,
+                        data=encode_payload(payload),
                         headers=headers,
                         timeout=self.timeout_seconds,
                         verify=self.verify_ssl,

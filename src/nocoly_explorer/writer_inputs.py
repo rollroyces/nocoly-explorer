@@ -17,12 +17,23 @@ time — both are optional dependencies (the ``dataframe`` and ``streaming``
 extras, respectively). Importing is attempted inside :func:`coerce_to_rows`
 and the corresponding ``ImportError`` is rewritten as a
 :class:`WriteValidationError` so callers see one error type.
+
+This module also exposes :func:`encode_payload` — a JSON encoder that
+extends the default to handle the common Python types that appear in
+real pandas / pyarrow outputs (``datetime``, ``date``, ``time``,
+``timedelta``, ``Decimal``, ``UUID``, numpy scalars). The sync and async
+writers use it to serialize request bodies so the
+``TypeError: Object of type X is not JSON serializable`` problem
+doesn't surface on the user.
 """
 
 from __future__ import annotations
 
-import json
+import datetime as _dt
+import decimal as _decimal
+import json as _json
 import os
+import uuid as _uuid
 from typing import Any, Dict, List, Mapping, Sequence, Union
 
 from .exceptions import WriteValidationError
@@ -160,8 +171,85 @@ def _coerce_from_path(path: str, *, operation: str) -> List[Dict[str, Any]]:
     return table.to_pylist()
 
 
+# ---------------------------------------------------------------------------
+# JSON encoder for request payloads
+# ---------------------------------------------------------------------------
+#
+# ``requests`` (via ``json=`` kwarg) and ``aiohttp`` (via ``json=`` kwarg) both
+# use stdlib ``json.dumps`` with no custom encoder. That fails immediately
+# when a pandas DataFrame, pyarrow Table, or any user-built payload contains
+# ``datetime`` / ``date`` / ``Decimal`` / ``UUID`` / numpy values — exactly the
+# values real Nocoetry data carries.
+#
+# We serialize the payload ourselves with :func:`encode_payload` and pass
+# the result as a pre-serialized ``data=`` string with the right
+# ``Content-Type`` header. This works identically with both ``requests`` and
+# ``aiohttp``, is allocation-cheap (single ``json.dumps`` per batch), and
+# surfaces a clean error if a truly unsupported type sneaks in.
+
+
+def _json_default(obj: Any) -> Any:
+    """Default encoder for ``json.dumps`` covering common pandas/pyarrow values."""
+    # Order: datetime first because datetime is a common pandas/pyarrow output
+    # and is the most likely thing to hit a user.
+    if isinstance(obj, (_dt.datetime, _dt.date)):
+        return obj.isoformat()
+    if isinstance(obj, _dt.time):
+        return obj.isoformat()
+    if isinstance(obj, _dt.timedelta):
+        # Nocoly doesn't have a documented duration type; this is a reasonable
+        # lossless default and matches what pandas/pyarrow emit.
+        return obj.total_seconds()
+    if isinstance(obj, _decimal.Decimal):
+        # ``float`` loses precision for very large or very small numbers.
+        # String preserves precision; pick the safer default.
+        return str(obj)
+    if isinstance(obj, _uuid.UUID):
+        return str(obj)
+    # numpy scalars — pyarrow ``to_pylist`` returns these on some paths,
+    # especially for older pyarrow versions or specific dtypes.
+    try:
+        import numpy as _np  # type: ignore
+
+        if isinstance(obj, _np.bool_):
+            return bool(obj)
+        if isinstance(obj, _np.integer):
+            return int(obj)
+        if isinstance(obj, _np.floating):
+            return float(obj)
+        if isinstance(obj, _np.datetime64):
+            # numpy has no portable datetime-as-string helper; fall back to
+            # converting via datetime64 -> ISO string.
+            return _np.datetime_as_string(obj, unit="us").replace("T", " ")
+        # ndarray: shouldn't normally appear inside a row dict, but be defensive.
+        if isinstance(obj, _np.ndarray):
+            return obj.tolist()
+    except ImportError:
+        pass
+    raise TypeError(
+        f"Object of type {type(obj).__name__} is not JSON serializable for Nocoly writes. "
+        "Convert to a JSON-friendly primitive (str, int, float, bool, dict, list, ISO date/datetime) before passing in."
+    )
+
+
+def encode_payload(payload: Any) -> str:
+    """Serialize a paywall to a JSON string using :func:`_json_default`.
+
+    Both ``requests`` and ``aiohttp`` accept a pre-serialized string via
+    ``data=``; pass the result alongside ``Content-Type: application/json``.
+    """
+    return _json.dumps(
+        payload,
+        default=_json_default,
+        ensure_ascii=False,
+        allow_nan=True,
+        separators=(",", ":"),
+    )
+
+
 __all__ = [
     "coerce_to_rows",
     "normalize_batch_size",
     "WriterInput",
+    "encode_payload",
 ]

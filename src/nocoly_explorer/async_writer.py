@@ -41,7 +41,7 @@ from .exceptions import (
     WriteValidationError,
 )
 from .writer import WriteResult
-from .writer_inputs import coerce_to_rows, normalize_batch_size
+from .writer_inputs import coerce_to_rows, encode_payload, normalize_batch_size
 
 _LOGGER = logging.getLogger("nocoly_explorer.async_writer")
 
@@ -329,7 +329,16 @@ class AsyncWorksheetWriter:
         results: List[Any] = [None] * len(chunks)
 
         async def run_with_semaphore(idx: int, batch: List[Any]) -> None:
+            # Check cancellation BEFORE grabbing a semaphore slot. Otherwise a
+            # task queued on the semaphore can be asked to wait for the next
+            # batch to finish before observing the cancel signal.
+            if cancel_check is not None and await cancel_check():
+                return ("__cancelled__", idx)
             async with semaphore:
+                # Re-check inside the critical section: another task that
+                # ran first may have set cancel after we passed the outer
+                # check. Cheap, and keeps cancellation latency at one
+                # inflight request instead of one per batch.
                 if cancel_check is not None and await cancel_check():
                     return ("__cancelled__", idx)
                 results[idx] = await self._send_batch(
@@ -417,6 +426,11 @@ class AsyncWorksheetWriter:
         url = self._url(endpoint)
         headers = self._hap_headers()
         payload = payload_builder(batch)
+        # Pre-serialize so the body can carry datetime / Decimal / UUID /
+        # numpy scalars without falling over stdlib ``json.dumps``. Both
+        # ``requests`` and ``aiohttp`` happily accept a ``data=`` string
+        # alongside ``Content-Type: application/json``.
+        body = encode_payload(payload)
         rp = self.config.retry_policy
         last_exc: Optional[BaseException] = None
         last_status: Optional[int] = None
@@ -426,7 +440,7 @@ class AsyncWorksheetWriter:
             await self._token_bucket.acquire()
             try:
                 async with self._session.request(  # type: ignore[union-attr]
-                    http_method, url, json=payload, headers=headers
+                    http_method, url, data=body, headers=headers
                 ) as resp:
                     if resp.status == 429:
                         retry_after = rp.parse_retry_after(

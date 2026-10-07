@@ -186,7 +186,7 @@ def test_add_rows_chunks_large_input_into_multiple_batches():
     assert result.batches_failed == 0
     assert len(responses) - request.call_count == 0  # all consumed
     # First three batches have 3 rows, last has 1.
-    bodies = [call.kwargs["json"]["rows"] for call in request.call_args_list]
+    bodies = [json.loads(call.kwargs["data"])["rows"] for call in request.call_args_list]
     assert [len(b) for b in bodies] == [3, 3, 3, 1]
 
 
@@ -201,7 +201,7 @@ def test_add_rows_sends_post_to_default_endpoint():
     args, kwargs = request.call_args
     assert args[0] == "POST"
     assert args[1] == "https://example.com/api/v3/app/worksheets/ws_1/rows"
-    assert kwargs["json"] == {"rows": [{"name": "alice"}]}
+    assert json.loads(kwargs["data"]) == {"rows": [{"name": "alice"}]}
     assert kwargs["headers"]["HAP-AppKey"] == "k"
     assert kwargs["headers"]["HAP-Sign"] == "s"
 
@@ -316,7 +316,7 @@ def test_update_rows_sends_put_with_key_column():
     )
 
     assert request.call_args.args[0] == "PUT"
-    body = request.call_args.kwargs["json"]
+    body = json.loads(request.call_args.kwargs["data"])
     assert body["keyColumn"] == "id"
     assert body["rows"] == [{"id": 1, "name": "alice"}, {"id": 2, "name": "bob"}]
     assert result.rows_succeeded == 2
@@ -333,7 +333,7 @@ def test_upsert_rows_sends_post_with_key_column():
     )
 
     assert request.call_args.args[0] == "POST"
-    body = request.call_args.kwargs["json"]
+    body = json.loads(request.call_args.kwargs["data"])
     assert body["keyColumn"] == "id"
     assert result.rows_succeeded == 1
 
@@ -369,7 +369,7 @@ def test_delete_rows_by_id_chunks_and_coerces():
 
     assert result.batches_sent == 2
     assert result.batches_failed == 0
-    bodies = [call.kwargs["json"] for call in request.call_args_list]
+    bodies = [json.loads(call.kwargs["data"]) for call in request.call_args_list]
     assert bodies[0] == {"rowIds": [1, 2]}
     assert bodies[1] == {"rowIds": [3]}
 
@@ -383,7 +383,7 @@ def test_delete_rows_by_filter_sends_single_batch():
         filter_criteria={"type": "group", "logic": "AND", "filters": []}
     )
 
-    assert request.call_args.kwargs["json"] == {
+    assert json.loads(request.call_args.kwargs["data"]) == {
         "filter": {"type": "group", "logic": "AND", "filters": []}
     }
 
@@ -397,7 +397,7 @@ def test_delete_rows_coerces_non_primitive_ids():
     guid = uuid.UUID("12345678-1234-5678-1234-567812345678")
     client.delete_rows(row_ids=[guid, 42, "raw-id"])
 
-    sent = request.call_args.kwargs["json"]["rowIds"]
+    sent = json.loads(request.call_args.kwargs["data"])["rowIds"]
     assert sent == [str(guid), 42, "raw-id"]
 
 
@@ -415,7 +415,7 @@ def test_add_rows_from_pandas_dataframe(monkeypatch):
     df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
     client.add_rows(df)
 
-    sent = request.call_args.kwargs["json"]["rows"]
+    sent = json.loads(request.call_args.kwargs["data"])["rows"]
     assert sent == [{"a": 1, "b": 3}, {"a": 2, "b": 4}]
 
 
@@ -428,7 +428,7 @@ def test_add_rows_from_pyarrow_table():
     table = pa.table({"a": [1, 2], "b": [3, 4]})
     client.add_rows(table)
 
-    sent = request.call_args.kwargs["json"]["rows"]
+    sent = json.loads(request.call_args.kwargs["data"])["rows"]
     assert sent == [{"a": 1, "b": 3}, {"a": 2, "b": 4}]
 
 
