@@ -57,6 +57,50 @@ def normalize_batch_size(batch_size: int, max_batch_size: int) -> int:
     return batch_size
 
 
+def chunk_into_batches(
+    items: Sequence[Any],
+    *,
+    batch_size: int,
+    max_batch_size: int,
+) -> List[List[Any]]:
+    """Split ``items`` into sub-lists of size ``<= batch_size``.
+
+    Empty input returns an empty list (callers should treat this as a no-op).
+    """
+    bs = normalize_batch_size(batch_size, max_batch_size)
+    if not items:
+        return []
+    return [list(items[i : i + bs]) for i in range(0, len(items), bs)]
+
+
+def coerce_id(value: Any) -> Any:
+    """Coerce a row id to a JSON-friendly primitive.
+
+    Strings, ints, floats, and bools pass through unchanged. UUIDs, Decimals,
+    datetimes, and any other non-primitive value are stringified — Nocoly's
+    write endpoints almost universally accept string ids.
+    """
+    if isinstance(value, (str, float, int, bool)):
+        return value
+    return str(value)
+
+
+def validate_key_present(
+    rows: Sequence[Mapping[str, Any]],
+    key: str,
+) -> None:
+    """Reject rows missing ``key`` (or with ``None`` for it) before sending."""
+    if not rows:
+        raise WriteValidationError("rows must contain at least one element")
+    missing = [i for i, r in enumerate(rows) if key not in r or r.get(key) is None]
+    if missing:
+        preview = ", ".join(str(i) for i in missing[:5])
+        raise WriteValidationError(
+            f"{len(missing)} row(s) missing key column {key!r} "
+            f"(first indices: {preview})"
+        )
+
+
 def coerce_to_rows(
     value: Any,
     *,
@@ -250,6 +294,9 @@ def encode_payload(payload: Any) -> str:
 __all__ = [
     "coerce_to_rows",
     "normalize_batch_size",
+    "chunk_into_batches",
+    "coerce_id",
+    "validate_key_present",
     "WriterInput",
     "encode_payload",
 ]

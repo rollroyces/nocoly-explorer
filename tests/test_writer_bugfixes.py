@@ -254,3 +254,58 @@ def test_encode_payload_handles_numpy_datetime64():
     out = encode_payload(rows)
     body = json.loads(out)
     assert "2025-01-15" in body[0]["created_at"]
+
+
+# ---------------------------------------------------------------------------
+# Helper dedupe: ``coerce_id`` / ``validate_key_present`` / ``chunk_into_batches``
+# are exposed once on the shared layer and reused by sync + async writers.
+# ---------------------------------------------------------------------------
+
+
+def test_coerce_id_passes_through_primitives():
+    from nocoly_explorer.writer_inputs import coerce_id
+    assert coerce_id("abc") == "abc"
+    assert coerce_id(42) == 42
+    assert coerce_id(3.14) == 3.14
+    assert coerce_id(True) is True
+    assert coerce_id(False) is False
+    assert coerce_id(0) == 0  # int stays int, doesn't get bool'd
+
+
+def test_coerce_id_stringifies_anything_else():
+    from nocoly_explorer.writer_inputs import coerce_id
+    import decimal as _decimal
+    import uuid as _uuid
+    import datetime as _dt
+    assert coerce_id(_decimal.Decimal("1.00")) == "1.00"
+    assert coerce_id(_uuid.UUID("12345678-1234-5678-1234-567812345678")) == "12345678-1234-5678-1234-567812345678"
+    assert coerce_id(_dt.datetime(2025, 1, 1)) == "2025-01-01 00:00:00"
+
+
+def test_validate_key_present_rejects_empty_rows():
+    from nocoly_explorer.writer_inputs import validate_key_present
+    with pytest.raises(WriteValidationError, match="at least one element"):
+        validate_key_present([], "id")
+
+
+def test_validate_key_present_reports_missing_indices():
+    from nocoly_explorer.writer_inputs import validate_key_present
+    rows = [{"id": 1}, {"no_id": "x"}, {"id": 3}, {"id": None}, {"missing": "y"}]
+    # 3 rows are "missing": index 1 (no key), index 3 (id=None), index 4 (no key).
+    with pytest.raises(WriteValidationError, match="3 row"):
+        validate_key_present(rows, "id")
+
+
+def test_chunk_into_batches_respects_batch_size_and_returns_empty():
+    from nocoly_explorer.writer_inputs import chunk_into_batches
+    assert chunk_into_batches([], batch_size=10, max_batch_size=100) == []
+    out = chunk_into_batches(list(range(7)), batch_size=3, max_batch_size=100)
+    assert out == [[0, 1, 2], [3, 4, 5], [6]]
+
+
+def test_chunk_into_batches_validates_arguments():
+    from nocoly_explorer.writer_inputs import chunk_into_batches
+    with pytest.raises(ValueError, match="batch_size"):
+        chunk_into_batches([1, 2], batch_size=0, max_batch_size=100)
+    with pytest.raises(ValueError, match="exceeds"):
+        chunk_into_batches([1, 2], batch_size=200, max_batch_size=100)

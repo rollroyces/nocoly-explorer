@@ -41,7 +41,14 @@ from .exceptions import (
     WriteValidationError,
 )
 from .writer import WriteResult
-from .writer_inputs import coerce_to_rows, encode_payload, normalize_batch_size
+from .writer_inputs import (
+    chunk_into_batches,
+    coerce_id,
+    coerce_to_rows,
+    encode_payload,
+    normalize_batch_size,
+    validate_key_present,
+)
 
 _LOGGER = logging.getLogger("nocoly_explorer.async_writer")
 
@@ -159,7 +166,11 @@ class AsyncWorksheetWriter:
     ) -> WriteResult:
         """Add new rows concurrently. See :meth:`WorksheetWriter.add_rows`."""
         coerced = coerce_to_rows(rows, operation="add")
-        chunks = self._chunk(coerced, batch_size=batch_size)
+        chunks = chunk_into_batches(
+            coerced,
+            batch_size=batch_size or self.batch_size,
+            max_batch_size=self.MAX_BATCH_SIZE,
+        )
         return await self._execute_batches(
             operation="add",
             chunks=chunks,
@@ -185,8 +196,12 @@ class AsyncWorksheetWriter:
                 "key_column is required for update_rows and must be a non-empty string"
             )
         coerced = coerce_to_rows(rows, operation="update")
-        self._validate_key_present(coerced, key_column)
-        chunks = self._chunk(coerced, batch_size=batch_size)
+        validate_key_present(coerced, key_column)
+        chunks = chunk_into_batches(
+            coerced,
+            batch_size=batch_size or self.batch_size,
+            max_batch_size=self.MAX_BATCH_SIZE,
+        )
         return await self._execute_batches(
             operation="update",
             chunks=chunks,
@@ -215,8 +230,12 @@ class AsyncWorksheetWriter:
                 "key_column is required for upsert_rows and must be a non-empty string"
             )
         coerced = coerce_to_rows(rows, operation="upsert")
-        self._validate_key_present(coerced, key_column)
-        chunks = self._chunk(coerced, batch_size=batch_size)
+        validate_key_present(coerced, key_column)
+        chunks = chunk_into_batches(
+            coerced,
+            batch_size=batch_size or self.batch_size,
+            max_batch_size=self.MAX_BATCH_SIZE,
+        )
         return await self._execute_batches(
             operation="upsert",
             chunks=chunks,
@@ -248,8 +267,12 @@ class AsyncWorksheetWriter:
             id_list = [v for v in row_ids if v is not None]
             if not id_list:
                 raise WriteValidationError("row_ids must contain at least one value")
-            coerced_ids = [self._coerce_id(v) for v in id_list]
-            chunks = self._chunk(coerced_ids, batch_size=batch_size)
+            coerced_ids = [coerce_id(v) for v in id_list]
+            chunks = chunk_into_batches(
+                coerced_ids,
+                batch_size=batch_size or self.batch_size,
+                max_batch_size=self.MAX_BATCH_SIZE,
+            )
             return await self._execute_batches(
                 operation="delete",
                 chunks=chunks,
@@ -270,35 +293,6 @@ class AsyncWorksheetWriter:
         )
 
     # --- Internal helpers ----------------------------------------------------
-
-    @staticmethod
-    def _coerce_id(value: Any) -> Any:
-        if isinstance(value, (str, float, int, bool)):
-            return value
-        return str(value)
-
-    @staticmethod
-    def _validate_key_present(rows: Sequence[Mapping[str, Any]], key: str) -> None:
-        if not rows:
-            raise WriteValidationError("rows must contain at least one element")
-        missing = [i for i, r in enumerate(rows) if key not in r or r.get(key) is None]
-        if missing:
-            preview = ", ".join(str(i) for i in missing[:5])
-            raise WriteValidationError(
-                f"{len(missing)} row(s) missing key column {key!r} "
-                f"(first indices: {preview})"
-            )
-
-    def _chunk(
-        self,
-        items: Sequence[Any],
-        *,
-        batch_size: Optional[int],
-    ) -> List[List[Any]]:
-        bs = normalize_batch_size(batch_size or self.batch_size, self.MAX_BATCH_SIZE)
-        if not items:
-            return []
-        return [list(items[i : i + bs]) for i in range(0, len(items), bs)]
 
     async def _execute_batches(
         self,
