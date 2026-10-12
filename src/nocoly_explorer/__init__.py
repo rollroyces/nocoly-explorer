@@ -9,6 +9,9 @@ __all__ = [
     "StreamingExportConfig", "ExportResult",
     "SchemaDriftError", "CardinalityExceededError",
     "AsyncWorksheetClient", "AsyncClientError", "PaginationLimitExceeded",
+    "WorksheetWriter", "WriteResult",
+    "AsyncWorksheetWriter", "AsyncWriteConfig",
+    "NocolyWriteError", "WriteValidationError", "WriteBatchError", "WriteBatchFailureInfo",
     "create_app", "JobSubmission", "JobStatus", "JobResult",
     "HealthResponse", "OutputSpec", "JobState", "run_job",
     "NocolyColumnInfo", "NocolyWorksheetSchema", "infer_schema_from_rows",
@@ -24,9 +27,15 @@ _STREAMING_EXPORTS = {
 _ERROR_EXPORTS = {
     "SchemaDriftError", "CardinalityExceededError",
     "AsyncClientError", "PaginationLimitExceeded",
+    "NocolyWriteError", "WriteValidationError", "WriteBatchError",
+    "WriteBatchFailureInfo",
 }
 _ASYNC_EXPORTS = {
     "AsyncWorksheetClient", "AsyncClientError", "PaginationLimitExceeded",
+}
+_WRITER_EXPORTS = {
+    "WorksheetWriter", "WriteResult",
+    "AsyncWorksheetWriter", "AsyncWriteConfig",
 }
 _SERVICE_EXPORTS = {
     "create_app", "JobSubmission", "JobStatus", "JobResult",
@@ -64,12 +73,18 @@ def __getattr__(name):
         from .exceptions import (
             SchemaDriftError, CardinalityExceededError,
             AsyncClientError, PaginationLimitExceeded,
+            NocolyWriteError, WriteValidationError, WriteBatchError,
+            WriteBatchFailureInfo,
         )
         return {
             "SchemaDriftError": SchemaDriftError,
             "CardinalityExceededError": CardinalityExceededError,
             "AsyncClientError": AsyncClientError,
             "PaginationLimitExceeded": PaginationLimitExceeded,
+            "NocolyWriteError": NocolyWriteError,
+            "WriteValidationError": WriteValidationError,
+            "WriteBatchError": WriteBatchError,
+            "WriteBatchFailureInfo": WriteBatchFailureInfo,
         }[name]
     if name in _ASYNC_EXPORTS:
         from .async_client import (
@@ -79,6 +94,19 @@ def __getattr__(name):
             "AsyncWorksheetClient": AsyncWorksheetClient,
             "AsyncClientError": AsyncClientError,
             "PaginationLimitExceeded": PaginationLimitExceeded,
+        }[name]
+    if name in _WRITER_EXPORTS:
+        if name in ("WorksheetWriter", "WriteResult"):
+            from .writer import WorksheetWriter, WriteResult
+            return {
+                "WorksheetWriter": WorksheetWriter,
+                "WriteResult": WriteResult,
+            }[name]
+        # AsyncWorksheetWriter / AsyncWriteConfig
+        from .async_writer import AsyncWorksheetWriter, AsyncWriteConfig
+        return {
+            "AsyncWorksheetWriter": AsyncWorksheetWriter,
+            "AsyncWriteConfig": AsyncWriteConfig,
         }[name]
     if name in _SERVICE_EXPORTS:
         from .service import create_app, JobState

@@ -36,6 +36,7 @@ pip install "nocoly-explorer[service]"
 | 04 | [`04_s3_export.py`](04_s3_export.py) | Stream directly into an S3 bucket via `pyarrow.fs.S3FileSystem` | `python examples/04_s3_export.py` |
 | 05 | [`05_filters.py`](05_filters.py) | Compose filters with the `NocolyFilter` DSL — quick / and_group / or_group | `python examples/05_filters.py` |
 | 06 | [`06_service_submit.py`](06_service_submit.py) | Submit an export job to the FastAPI service and poll for completion | `python examples/06_service_submit.py` |
+| 07 | [`07_writer.py`](07_writer.py) | Write rows back to a Nocoly worksheet with `WorksheetWriter` / `AsyncWorksheetWriter` — add / update / upsert / delete | `python examples/07_writer.py` |
 
 ## Required environment variables
 

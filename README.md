@@ -89,7 +89,7 @@ async def main():
 asyncio.run(main())
 ```
 
-See [`examples/`](examples/) for six runnable scripts covering each layer, or jump to a
+See [`examples/`](examples/) for seven runnable scripts covering each layer, or jump to a
 specific section below.
 
 ---
@@ -107,6 +107,7 @@ they compose, you don't have to commit to one.
 | Build a pipeline that only pulls *new* rows each run | Streaming + incremental sync | Saves bandwidth and avoids re-processing |
 | Explore what columns a worksheet has before exporting | Schema discovery | Avoids guessing; tells you types |
 | Push exports directly into an S3 bucket | Streaming + parquet_s3 sink | No local disk round-trip |
+| Write rows back to a Nocoly worksheet (add / update / upsert / delete) | `WorksheetWriter` / `AsyncWorksheetWriter` (v0.5.0) | Sync + async write clients; batched, retried, `fail_fast`-aware; 4 input formats (list / pandas / pyarrow / file path) |
 
 Not on the list at all? Use one-shot fetch — it's the cheapest path and
 can be upgraded later without rewriting your code.
@@ -127,6 +128,7 @@ can be upgraded later without rewriting your code.
 - [Discovering the worksheet schema](#discovering-the-worksheet-schema-v020)
 - [Incremental sync](#incremental-sync-v040)
 - [Layer 2 — `StreamingExporter` + `AsyncWorksheetClient`](#layer-2--streamingexporter--asyncworksheetclient-v020)
+- [Writing rows back to a worksheet (`WorksheetWriter`)](#writing-rows-back-to-a-worksheet-worksheetwriter-v050)
 - [Layer 3 — `create_app` + `run_job`](#layer-3--create_app--run_job-v020)
 - [Configuration](#configuration)
 - [Development](#development)
@@ -228,7 +230,7 @@ cloning the repo, that's also the link.
 | **Architecture** | Visual flow diagram for the FastAPI + Redis + Arq worker pipeline |
 | **Playground** | Interactive browser simulation of `WorksheetExporter` / `StreamingExporter`. Pick a sample worksheet, build a filter, choose an output format (`dataframe` / `json` / `csv` / `parquet`), and watch pages stream in with a live progress bar and cancel button |
 | **API reference** | All six service endpoints (`/healthz`, `/readyz`, `POST /jobs`, `GET /jobs/{id}`, `GET /jobs/{id}/result`, `POST /jobs/{id}/cancel`) with `curl` examples |
-| **Error codes** | All 11 stable `NOCOLY_xxx` codes, when each one fires, and the recommended catch pattern |
+| **Error codes** | All 14 stable `NOCOLY_xxx` codes, when each one fires, and the recommended catch pattern |
 
 ### How to use it
 
@@ -655,6 +657,142 @@ Protocol) — sync or async, real or fake.
 
 ---
 
+## Writing rows back to a worksheet (`WorksheetWriter`) (v0.5.0)
+
+The `WorksheetWriter` (sync) and `AsyncWorksheetWriter` (async) classes are the
+counterpart to the read client: same HAP-AppKey / HAP-Sign auth, same retry
+policy, same batching + rate-limiting plumbing — but for writing rows back to
+a Nocoly worksheet.
+
+### What it supports
+
+| Operation | Method (sync / async) | Required args |
+|---|---|---|
+| **Add** new rows | `add_rows(rows)` | rows |
+| **Update** rows by key | `update_rows(rows, key_column=...)` | rows, `key_column` |
+| **Upsert** (add-or-update) | `upsert_rows(rows, key_column=...)` | rows, `key_column` |
+| **Delete** by id list | `delete_rows(row_ids=...)` | exactly one of `row_ids` / `filter_criteria` |
+| **Delete** by filter | `delete_rows(filter_criteria=...)` | (same) |
+
+`rows` can be **any** of:
+
+- `List[Dict[str, Any]]` — the simplest form.
+- A `pandas.DataFrame` (requires the `[dataframe]` extra).
+- A `pyarrow.Table` or `pyarrow.RecordBatch` (requires `[streaming]`).
+- A local file path — `.csv`, `.tsv`, `.json` / `.jsonl` / `.ndjson`,
+  `.parquet`, `.arrow` / `.ipc`. Read via pyarrow.
+
+Rows are chunked into HTTP requests of `batch_size` rows each (default `500`,
+hard-capped at `1000` — same ceiling as the read-side page size). Every
+batch carries the `HAP-AppKey` / `HAP-Sign` headers, so existing credentials
+work unchanged.
+
+### Sync example
+
+```python
+from nocoly_explorer import WorksheetWriter
+from nocoly_explorer.auth import CredentialPair
+
+writer = WorksheetWriter(
+    host="https://nocoly.example.com",
+    worksheet_id="ws_123",
+    credentials=CredentialPair(app_key="...", app_sign="..."),
+    batch_size=500,
+)
+
+# Add rows
+result = writer.add_rows([
+    {"id": 1, "name": "alice", "region": "HK"},
+    {"id": 2, "name": "bob",   "region": "SZ"},
+])
+print(result)
+# WriteResult(operation='add', rows_attempted=2, rows_succeeded=2,
+#             batches_sent=1, batches_failed=0, failures=[])
+
+# Update by key column
+writer.update_rows(
+    [{"id": 1, "region": "HK-W"}],
+    key_column="id",
+)
+
+# Upsert (add-or-update)
+writer.upsert_rows(
+    [{"id": 3, "name": "carol", "region": "SH"}],
+    key_column="id",
+)
+
+# Delete by id list
+writer.delete_rows(row_ids=[1, 2])
+
+# Delete by filter (single batch, no chunking)
+writer.delete_rows(
+    filter_criteria={"type": "group", "logic": "AND",
+                     "filters": [{"type": "condition", "field": "status",
+                                  "operator": "EQ", "value": "inactive"}]},
+)
+```
+
+### Async example
+
+```python
+import asyncio
+from nocoly_explorer import AsyncWorksheetWriter, AsyncWriteConfig
+
+async def main():
+    async with AsyncWorksheetWriter(
+        base_url="https://nocoly.example.com",
+        auth_token="<app_key>:<app_sign>",
+        worksheet_id="ws_123",
+        batch_size=500,
+        config=AsyncWriteConfig(concurrency=8, requests_per_second=20.0),
+    ) as writer:
+        result = await writer.add_rows(my_pandas_dataframe)  # or list / pyarrow
+        print(result.rows_succeeded, "of", result.rows_attempted)
+
+asyncio.run(main())
+```
+
+The async writer reuses the same `TokenBucket` + `RetryPolicy` as
+`AsyncWorksheetClient`, including `Retry-After` honoring on 429.
+
+### Errors
+
+- `WriteValidationError` — invalid input *before* any HTTP call (missing
+  key column, empty id list, unsupported value, etc.).
+- `WriteBatchError` — at least one batch failed when `fail_fast=True` (the
+  default). The exception carries a `failures` list of
+  `WriteBatchFailureInfo(batch_index, status_code, body, error)` so the
+  caller can retry or report which batches to skip.
+- Pass `fail_fast=False` on any operation to attempt every batch and
+  collect failures into `WriteResult.failures` instead of raising.
+
+### Caveat — write URLs are unverified
+
+The default endpoint paths in `WorksheetWriter` / `AsyncWorksheetWriter`
+(`/rows`, `/rows/upsert`, `/rows/delete`) are **educated guesses** —
+Nocoly v3 only documents `POST /api/v3/app/worksheets/{id}/rows/list`
+(read) in this repository. Override per call when you know the real
+URLs:
+
+```python
+writer = WorksheetWriter(
+    host="...",
+    worksheet_id="ws_123",
+    credentials=...,
+    add_endpoint="/api/v3/app/worksheets/{worksheet_id}/rows/create",
+    update_endpoint="/api/v3/app/worksheets/{worksheet_id}/rows/{row_id}",
+    upsert_endpoint="/api/v3/app/worksheets/{worksheet_id}/rows/upsert",
+    delete_endpoint="/api/v3/app/worksheets/{worksheet_id}/rows/bulk-delete",
+)
+```
+
+Same pattern for `AsyncWorksheetWriter` (`add_endpoint=` etc.).
+
+See [Honest gaps](#honest-gaps) — "Write endpoints" — for the full
+status.
+
+---
+
 ## Layer 3 — `create_app` + `run_job` (v0.2.0)
 
 A FastAPI service for orchestrating exports from n8n, Airflow, cron, or anything
@@ -803,6 +941,7 @@ vars, run command) and reads credentials from environment variables only.
 | 04 | [`examples/04_s3_export.py`](examples/04_s3_export.py) | Stream directly into an S3 bucket via `pyarrow.fs.S3FileSystem` |
 | 05 | [`examples/05_filters.py`](examples/05_filters.py) | Seven `NocolyFilter` DSL recipes |
 | 06 | [`examples/06_service_submit.py`](examples/06_service_submit.py) | Submit an export job to the FastAPI service via httpx |
+| 07 | [`examples/07_writer.py`](examples/07_writer.py) | **Write rows back to a Nocoly worksheet** — `WorksheetWriter` / `AsyncWorksheetWriter` for add / update / upsert / delete (v0.5.0) |
 
 See [`examples/README.md`](examples/README.md) for the full environment-variable
 reference and a quick-start for the service example.
@@ -848,6 +987,17 @@ remaining items to your own integration checklist:
   validated against a local mock that matches the documented pagination shape.
   Field names, auth headers, and error responses on the real server have not
   been exercised here.
+- **Write endpoints (`WorksheetWriter` / `AsyncWorksheetWriter`).** The
+  default paths in v0.5.0 (`/rows`, `/rows/upsert`, `/rows/delete`) and
+  payload shapes (`{"rows": [...]}`, `{"rows": [...], "keyColumn": ...}`,
+  `{"rowIds": [...]}`, `{"filter": ...}`) are educated guesses built
+  from the documented read endpoint. None have been verified against a
+  real Nocoly server. The auth headers and HAP-AppKey / HAP-Sign shape
+  match the read side, which **is** verified against the documented
+  contract. Override the `*_endpoint` constructor arguments or subclass
+  the writers once you know the real URLs. Every write call emits a
+  DEBUG log line (`writer.batch_attempt` or `async_writer.*`) so you can
+  confirm what was actually sent.
 - **Metadata endpoint for `get_worksheet_schema`.** The default endpoint
   (`/api/v3/app/worksheets/{id}/columns`) is an educated guess; the Nocoly
   metadata path has not been verified against a real server. The sample-based
@@ -1018,6 +1168,9 @@ the code from the name with a single conversion.
 | `job_not_found` | `JobNotFound` | The `job_id` you queried does not exist in Redis |
 | `job_not_ready` | `JobNotReady` | `GET /jobs/{id}/result` was called before the job finished |
 | `job_cancelled` | `JobCancelled` | A cooperative `cancel_check` returned `True` mid-pagination |
+| `nocoly_write_error` | `NocolyWriteError` | Base class for write failures (added in v0.5.0) |
+| `write_validation` | `WriteValidationError` | Write inputs are invalid (missing key, empty payload, unsupported type) — request never sent |
+| `write_batch` | `WriteBatchError` | One or more batches in a write call failed; see `exc.failures` for per-batch details |
 
 ### Recommended catch pattern
 
